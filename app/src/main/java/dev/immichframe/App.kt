@@ -22,6 +22,7 @@ class App : Application() {
     lateinit var cache: PhotoCache
     lateinit var engine: Engine
     lateinit var updater: Updater
+    lateinit var power: Power
     private var server: ApiServer? = null
 
     /** Set by SetupActivity so it can close itself when the phone finishes setup. Main thread. */
@@ -34,6 +35,7 @@ class App : Application() {
         rebuildClients()
         stats = Stats(this)
         cache = PhotoCache(this)
+        power = Power(this)
         engine = Engine(this)
         updater = Updater(this)
         startServer()

@@ -82,6 +82,17 @@ class Prefs(ctx: Context) {
 
     fun removeAccount(id: String) { accounts = accounts.filter { it.id != id } }
 
+    /** Sleep when nobody is around (mic loudness + touches), wake on sound. */
+    var presence: Boolean
+        get() = p.getBoolean("presence", false)
+        set(v) = put("presence", v)
+    var idleMinutes: Int
+        get() = p.getInt("idleMinutes", 15)
+        set(v) = put("idleMinutes", v.coerceIn(1, 720))
+    var sensitivity: Int
+        get() = p.getInt("sensitivity", 5)
+        set(v) = put("sensitivity", v.coerceIn(1, 10))
+
     var videos: Boolean
         get() = p.getBoolean("videos", true)
         set(v) = put("videos", v)

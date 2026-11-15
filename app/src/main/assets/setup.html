@@ -117,6 +117,27 @@
     </div>
   </section>
 
+  <!-- PRESENCE -->
+  <section>
+    <h2>Presence &amp; sleep</h2>
+    <p class="muted" style="margin:0 0 6px">Uses the frame's microphone as a "someone is here" sensor: only the loudness is measured, no sound is recorded or sent. Touching the screen counts too.</p>
+    <div class="toggle"><span>Sleep when nobody is around, wake on sound</span><input type="checkbox" id="presence"></div>
+    <div class="two">
+      <div><label for="idleMinutes">Sleep after (minutes of quiet)</label><input id="idleMinutes" type="number" min="1" max="720"></div>
+      <div><label for="sensitivity">Sensitivity <span class="muted" id="sensVal"></span></label><input id="sensitivity" type="range" min="1" max="10" style="width:100%;accent-color:var(--accent);min-height:48px"></div>
+    </div>
+    <div class="muted" id="mic" style="margin-top:10px">Microphone: …</div>
+    <div style="height:8px;border-radius:4px;background:#0F0F11;margin-top:8px;position:relative;overflow:hidden">
+      <div id="meter" style="position:absolute;left:0;top:0;bottom:0;width:0;background:var(--ok)"></div>
+      <div id="trig" style="position:absolute;top:0;bottom:0;width:2px;background:var(--accent);left:0"></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button id="sleepNow">Sleep now</button>
+      <button id="sleep1h">Sleep 1 hour</button>
+      <button id="wakeNow">Wake</button>
+    </div>
+  </section>
+
   <div class="row">
     <button class="primary" id="save" style="flex:1">Save settings</button>
   </div>
@@ -204,6 +225,8 @@
       $('ovInfo').checked = s.overlays.info; $('ovAlbum').checked = s.overlays.album;
       $('lat').value = s.lat; $('lon').value = s.lon;
       $('night').checked = s.night.enabled; $('nightStart').value = s.night.start; $('nightEnd').value = s.night.end;
+      $('presence').checked = s.presence.enabled; $('idleMinutes').value = s.presence.idleMinutes;
+      $('sensitivity').value = s.presence.sensitivity; $('sensVal').textContent = '(' + s.presence.sensitivity + '/10)';
     });
     api('GET', '/status').then(function (st) {
       $('sub').textContent = st.accounts + ' account(s) · ' + st.source.name + ' · ' + st.status + ' · ' + st.orientation + ' · v' + st.version;
@@ -216,7 +239,9 @@
       videos: $('videos').checked, videoSound: $('videoSound').checked, maxVideo: parseInt($('maxVideo').value, 10) || 60,
       overlays: { clock: $('ovClock').checked, weather: $('ovWeather').checked, info: $('ovInfo').checked, album: $('ovAlbum').checked },
       lat: $('lat').value.trim(), lon: $('lon').value.trim(),
-      night: { enabled: $('night').checked, start: $('nightStart').value || '23:00', end: $('nightEnd').value || '07:00' }
+      night: { enabled: $('night').checked, start: $('nightStart').value || '23:00', end: $('nightEnd').value || '07:00' },
+      presence: { enabled: $('presence').checked, idleMinutes: parseInt($('idleMinutes').value, 10) || 15,
+                  sensitivity: parseInt($('sensitivity').value, 10) || 5 }
     };
     $('save').disabled = true;
     api('PUT', '/settings', body).then(function () { msg($('sMsg'), 'ok', 'Saved. The frame uses the new settings now.'); loadSettings(); })
@@ -230,6 +255,30 @@
   }
   $('upd').onclick = function () { $('ver').textContent = 'Checking GitHub…'; api('POST', '/update').then(showUpdate).catch(function (e) { $('ver').textContent = e.message; }); };
   api('GET', '/update').then(showUpdate).catch(function () {});
+
+  // ---------- presence meter + sleep buttons
+  $('sensitivity').oninput = function () { $('sensVal').textContent = '(' + $('sensitivity').value + '/10)'; };
+  function pct(db) { return Math.max(0, Math.min(100, (db + 90) / 90 * 100)); }
+  function pollPresence() {
+    api('GET', '/presence').then(function (s) {
+      var p = s.presence, txt;
+      if (!p.enabled) txt = 'Off. Turn it on and save to start listening.';
+      else if (!p.permission) txt = 'Waiting for permission: tap "Allow" on the frame.';
+      else if (p.microphone === false) txt = 'No usable microphone: ' + (p.error || '');
+      else if (!p.listening) txt = 'Starting…';
+      else txt = 'Listening · now ' + p.levelDb + ' dB · room ' + p.floorDb + ' dB · triggers above ' + p.triggerDb + ' dB';
+      txt += s.sleeping ? ' · ASLEEP (' + s.reason + ')' : ' · awake';
+      if (!s.realScreenOff) txt += ' · screen dims to black (device owner turns it fully off)';
+      $('mic').textContent = 'Microphone: ' + txt;
+      $('meter').style.width = (p.listening ? pct(p.levelDb) : 0) + '%';
+      $('meter').style.background = p.levelDb > p.triggerDb ? 'var(--accent)' : 'var(--ok)';
+      $('trig').style.left = pct(p.triggerDb) + '%';
+    }).catch(function () {});
+  }
+  setInterval(pollPresence, 1000); pollPresence();
+  $('sleepNow').onclick = function () { api('POST', '/sleep', {}).then(pollPresence); };
+  $('sleep1h').onclick = function () { api('POST', '/sleep', { minutes: 60 }).then(pollPresence); };
+  $('wakeNow').onclick = function () { api('POST', '/wake').then(pollPresence); };
 
   loadAccounts();
   loadSettings();

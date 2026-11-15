@@ -59,7 +59,15 @@ class Engine(private val app: App) {
     var screenW = 1280; private set
     var screenH = 800; private set
     val landscape get() = screenW >= screenH
-    var displayOn = true; private set
+    var sleeping = false; private set
+    var sleepReason: String? = null; private set   // manual | idle
+    var sleepSince = 0L; private set
+    private var wakeJob: Job? = null
+    var lastActivity = System.currentTimeMillis(); private set
+    val displayOn get() = !sleeping
+    /** Screen dark for any reason: asleep or night hours. */
+    val screenOff get() = sleeping || nightActive
+    val presence = Presence(app) { activity("sound") }
     var brightness = -1; private set          // -1 = system default, else 0..100
     var nightActive = false; private set
     var weatherTemp: Int? = null; private set
@@ -86,6 +94,8 @@ class Engine(private val app: App) {
         source = prefs.source
         scope.launch { lock.withLock { loadPool(true) }; advance() }
         scope.launch { while (true) { checkNight(); delay(30_000) } }
+        scope.launch { while (true) { checkIdle(); delay(10_000) } }
+        updatePresence()
         scope.launch { while (true) { refreshWeather(); delay(30 * 60_000L) } }
     }
 
@@ -296,7 +306,7 @@ class Engine(private val app: App) {
         val ms = override ?: current?.video?.let { videoMs(it) + 3_000 } ?: maxOf(prefs.interval * 1000L, pinUntil - now)
         tick = scope.launch {
             delay(ms)
-            if (!displayOn || nightActive) { schedule(60_000); return@launch }
+            if (screenOff) { schedule(60_000); return@launch }
             pinUntil = 0
             advance()
         }
@@ -419,12 +429,69 @@ class Engine(private val app: App) {
         play(Source("search", null, "“$q”", q), until, persist = false)
 
     suspend fun setDisplay(on: Boolean?, bright: Int?) = withContext(main) {
-        if (on != null) displayOn = on
         if (bright != null) brightness = bright.coerceIn(-1, 100)
-        listener?.onDisplay()
-        if (displayOn && !paused && tick?.isActive != true) schedule(null)
-        emit("display", JSONObject().put("on", displayOn).put("brightness", brightness))
+        when (on) {
+            false -> sleep(null, "manual")
+            true -> wake("api")
+            null -> listener?.onDisplay()
+        }
     }
+
+    // ---------------------------------------------------------------- sleep / presence
+
+    /** Go to sleep. minutes = auto-wake after that long. reason "idle" is woken by sound; "manual" only by wake/touch/timer. */
+    suspend fun sleep(minutes: Int?, reason: String = "manual") = withContext(main) {
+        wakeJob?.cancel()
+        if (minutes != null && minutes > 0) wakeJob = scope.launch { delay(minutes * 60_000L); wake("timer") }
+        if (sleeping && sleepReason == "manual" && reason == "idle") return@withContext
+        sleeping = true; sleepReason = reason; sleepSince = System.currentTimeMillis()
+        tick?.cancel()
+        applyPower()
+        notifyState()
+        emit("sleep", sleepJson())
+    }
+
+    suspend fun wake(why: String = "api") = withContext(main) {
+        wakeJob?.cancel()
+        lastActivity = System.currentTimeMillis()
+        if (!sleeping) return@withContext
+        sleeping = false; sleepReason = null
+        applyPower()
+        if (!paused) schedule(if (nightActive) null else 1_500)
+        notifyState()
+        emit("sleep", sleepJson().put("wokeBy", why))
+    }
+
+    /** Touch, sound, API use. Called from any thread. */
+    fun activity(kind: String) {
+        scope.launch {
+            lastActivity = System.currentTimeMillis()
+            if (!sleeping || nightActive) return@launch
+            // idle sleep wakes on anything; manual sleep only on touch
+            if (sleepReason == "idle" || kind == "touch") wake(kind)
+        }
+    }
+
+    private suspend fun checkIdle() {
+        if (!prefs.presence || sleeping || nightActive) return
+        if (System.currentTimeMillis() - lastActivity > prefs.idleMinutes * 60_000L) sleep(null, "idle")
+    }
+
+    fun updatePresence() {
+        if (prefs.presence) { presence.start(); app.power.holdCpu(true) } else { presence.stop(); app.power.holdCpu(false) }
+    }
+
+    private fun applyPower() {
+        listener?.onDisplay()
+        app.power.setScreen(!screenOff)
+    }
+
+    fun sleepJson(): JSONObject = JSONObject()
+        .put("sleeping", sleeping).put("reason", sleepReason).put("since", sleepSince)
+        .put("night", nightActive).put("lastActivity", lastActivity)
+        .put("idleMinutes", prefs.idleMinutes).put("autoSleep", prefs.presence)
+        .put("realScreenOff", app.power.canLock)
+        .put("presence", presence.json())
 
     /** Albums from all accounts, merged by name: [{id: "acct:id,acct:id", name, count, sources}] */
     suspend fun albums(): JSONArray {
@@ -511,7 +578,8 @@ class Engine(private val app: App) {
         }
         if (active != nightActive) {
             nightActive = active
-            listener?.onDisplay()
+            if (!active) lastActivity = System.currentTimeMillis()   // don't idle-sleep right after night ends
+            applyPower()
             if (!active && !paused) schedule(1_000)
             emit("display", JSONObject().put("night", active))
         }
@@ -565,6 +633,8 @@ class Engine(private val app: App) {
         .put("orientation", if (landscape) "landscape" else "portrait")
         .put("screen", "${screenW}x$screenH")
         .put("displayOn", displayOn)
+        .put("sleeping", sleeping)
+        .put("sleepReason", sleepReason)
         .put("night", nightActive)
         .put("brightness", brightness)
         .put("weather", weatherTemp?.let { JSONObject().put("temp", it).put("desc", weatherDesc) })
@@ -581,6 +651,8 @@ class Engine(private val app: App) {
         .put("overlays", JSONObject().put("clock", prefs.showClock).put("weather", prefs.showWeather)
             .put("info", prefs.showInfo).put("album", prefs.showAlbum))
         .put("night", JSONObject().put("enabled", prefs.nightEnabled).put("start", prefs.nightStart).put("end", prefs.nightEnd))
+        .put("presence", JSONObject().put("enabled", prefs.presence).put("idleMinutes", prefs.idleMinutes)
+            .put("sensitivity", prefs.sensitivity))
         .put("lat", prefs.lat).put("lon", prefs.lon)
         .put("defaultSource", prefs.source.toJson())
 
@@ -606,6 +678,13 @@ class Engine(private val app: App) {
             n.optStr("start")?.let { prefs.nightStart = it }
             n.optStr("end")?.let { prefs.nightEnd = it }
             checkNight()
+        }
+        o.optJSONObject("presence")?.let { pr ->
+            if (pr.has("idleMinutes")) prefs.idleMinutes = pr.getInt("idleMinutes")
+            if (pr.has("sensitivity")) prefs.sensitivity = pr.getInt("sensitivity")
+            if (pr.has("enabled")) { prefs.presence = pr.getBoolean("enabled"); lastActivity = System.currentTimeMillis() }
+            updatePresence()
+            listener?.onState()   // activity asks for mic permission if needed
         }
         o.optStr("lat")?.let { prefs.lat = it }
         o.optStr("lon")?.let { prefs.lon = it }

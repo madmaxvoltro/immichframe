@@ -69,8 +69,8 @@
     <button data-src="memories">On this day</button>
   </div>
   <div class="row">
-    <button id="off">Screen off</button>
-    <button id="on">Screen on</button>
+    <button id="off">Sleep</button>
+    <button id="on">Wake</button>
   </div>
   <div class="row">
     <button id="update">Check for updates</button>
@@ -146,8 +146,8 @@
     var q = $('ask').value.trim(); if (!q) return;
     api('POST', '/ask', { q: q }).then(function (r) { $('status').textContent = r.matched + ' photos for “' + q + '”'; setTimeout(refresh, 1500); }).catch(fail);
   };
-  $('off').onclick = function () { api('POST', '/display', { on: false }).catch(fail); };
-  $('on').onclick = function () { api('POST', '/display', { on: true }).catch(fail); };
+  $('off').onclick = function () { api('POST', '/sleep', {}).catch(fail); };
+  $('on').onclick = function () { api('POST', '/wake').catch(fail); };
   Array.prototype.forEach.call(document.querySelectorAll('[data-src]'), function (b) {
     b.onclick = function () { api('POST', '/play', { source: { type: b.getAttribute('data-src') } }).then(refresh).catch(fail); };
   });

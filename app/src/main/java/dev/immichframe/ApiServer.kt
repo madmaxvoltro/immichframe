@@ -171,6 +171,16 @@ class ApiServer(private val app: App, port: Int) : NanoHTTPD(port) {
                 runBlocking { engine.setDisplay(on, b) }
                 ok()
             }
+            // ---- sleep / presence
+            get && (p == "/sleep" || p == "/presence") -> json(onMain { engine.sleepJson() })
+            post && p == "/sleep" -> {
+                // {"minutes": 60} = wake up again after an hour; no minutes = until /wake, a touch or the morning
+                val min = if (body.has("minutes")) body.getInt("minutes") else null
+                runBlocking { engine.sleep(min, "manual") }
+                ok(onMain { engine.sleepJson() })
+            }
+            post && p == "/wake" -> { runBlocking { engine.wake("api") }; ok(onMain { engine.sleepJson() }) }
+
             get && p == "/update" -> json(app.updater.statusJson())
             post && p == "/update" -> json(app.updater.checkAndInstall(body.optBoolean("install", true)))
             post && p == "/reboot" -> {

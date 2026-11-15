@@ -75,7 +75,11 @@ class SlideshowActivity : Activity(), Engine.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         setContentView(R.layout.activity_slideshow)
         bind()
         applyOrientation()
@@ -179,6 +183,30 @@ class SlideshowActivity : Activity(), Engine.Listener {
         }
     }
 
+    /** Every touch counts as "someone is here". While asleep, the touch only wakes the frame. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            val wasOff = engine.sleeping && !engine.nightActive
+            engine.activity("touch")
+            if (wasOff) return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private var askedMic = false
+
+    private fun askMicIfNeeded() {
+        if (app.prefs.presence && !engine.presence.hasPermission && !askedMic) {
+            askedMic = true
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 7)
+        }
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, perms, results)
+        if (code == 7) engine.updatePresence()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_NEXT -> { engine.scope.launch { engine.next(true) }; return true }
@@ -253,6 +281,7 @@ class SlideshowActivity : Activity(), Engine.Listener {
 
     override fun onState() {
         val p = app.prefs
+        askMicIfNeeded()
         albumName.text = engine.source.name
         btnSource.text = engine.source.name
         albumChip.visibility = if (p.showAlbum && engine.current != null) View.VISIBLE else View.GONE
@@ -265,7 +294,8 @@ class SlideshowActivity : Activity(), Engine.Listener {
         btnPause.contentDescription = if (engine.paused) "Play" else "Pause"
         if (engine.paused) progressAnim?.pause() else progressAnim?.resume()
         player?.let { mp ->
-            if (playerReady) runCatching { if (engine.paused && mp.isPlaying) mp.pause() else if (!engine.paused && !mp.isPlaying) mp.start() }
+            val hold = engine.paused || engine.screenOff
+            if (playerReady) runCatching { if (hold && mp.isPlaying) mp.pause() else if (!hold && !mp.isPlaying) mp.start() }
             val vol = if (p.videoSound) 1f else 0f
             runCatching { mp.setVolume(vol, vol) }
         }
@@ -293,7 +323,8 @@ class SlideshowActivity : Activity(), Engine.Listener {
     }
 
     override fun onDisplay() {
-        val off = !engine.displayOn || engine.nightActive
+        val off = engine.screenOff
+        if (off) { setControls(false); player?.let { if (playerReady) runCatching { it.pause() } } }
         nightCover.visibility = if (off) View.VISIBLE else View.GONE
         val lp = window.attributes
         lp.screenBrightness = when {
