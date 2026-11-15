@@ -107,13 +107,19 @@
     </div>
   </section>
 
-  <!-- NIGHT -->
+  <!-- SCHEDULE -->
   <section>
-    <h2>Night</h2>
-    <div class="toggle"><span>Turn the screen off at night</span><input type="checkbox" id="night"></div>
-    <div class="two">
-      <div><label for="nightStart">Off from</label><input id="nightStart" type="time"></div>
-      <div><label for="nightEnd">On again at</label><input id="nightEnd" type="time"></div>
+    <h2>Schedule</h2>
+    <p class="muted" style="margin:0">When the screen is on. The first rule that matches wins.<br>
+      <b>Off</b>: dark even if someone is there (touching the screen still wakes it for a while).<br>
+      <b>Always on</b>: on whether anyone is there or not.<br>
+      <b>When someone is there</b>: dark until a sound or touch, then on for the "stay on" minutes.<br>
+      Outside every rule: <span id="outside">…</span></p>
+    <div id="rules" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="small" id="addOff">+ Off window</button>
+      <button class="small" id="addOn">+ Always-on window</button>
+      <button class="small" id="addAuto">+ "When someone is there" window</button>
     </div>
   </section>
 
@@ -121,9 +127,9 @@
   <section>
     <h2>Presence &amp; sleep</h2>
     <p class="muted" style="margin:0 0 6px">Uses the frame's microphone as a "someone is here" sensor: only the loudness is measured, no sound is recorded or sent. Touching the screen counts too.</p>
-    <div class="toggle"><span>Sleep when nobody is around, wake on sound</span><input type="checkbox" id="presence"></div>
+    <div class="toggle"><span>Use presence (dark when nobody is around)</span><input type="checkbox" id="presence"></div>
     <div class="two">
-      <div><label for="idleMinutes">Sleep after (minutes of quiet)</label><input id="idleMinutes" type="number" min="1" max="720"></div>
+      <div><label for="idleMinutes">Stay on after someone is noticed (minutes)</label><input id="idleMinutes" type="number" min="1" max="720"></div>
       <div><label for="sensitivity">Sensitivity <span class="muted" id="sensVal"></span></label><input id="sensitivity" type="range" min="1" max="10" style="width:100%;accent-color:var(--accent);min-height:48px"></div>
     </div>
     <div class="muted" id="mic" style="margin-top:10px">Microphone: …</div>
@@ -224,7 +230,7 @@
       $('ovClock').checked = s.overlays.clock; $('ovWeather').checked = s.overlays.weather;
       $('ovInfo').checked = s.overlays.info; $('ovAlbum').checked = s.overlays.album;
       $('lat').value = s.lat; $('lon').value = s.lon;
-      $('night').checked = s.night.enabled; $('nightStart').value = s.night.start; $('nightEnd').value = s.night.end;
+      rules = s.schedule || []; renderRules();
       $('presence').checked = s.presence.enabled; $('idleMinutes').value = s.presence.idleMinutes;
       $('sensitivity').value = s.presence.sensitivity; $('sensVal').textContent = '(' + s.presence.sensitivity + '/10)';
     });
@@ -239,7 +245,7 @@
       videos: $('videos').checked, videoSound: $('videoSound').checked, maxVideo: parseInt($('maxVideo').value, 10) || 60,
       overlays: { clock: $('ovClock').checked, weather: $('ovWeather').checked, info: $('ovInfo').checked, album: $('ovAlbum').checked },
       lat: $('lat').value.trim(), lon: $('lon').value.trim(),
-      night: { enabled: $('night').checked, start: $('nightStart').value || '23:00', end: $('nightEnd').value || '07:00' },
+      schedule: rules,
       presence: { enabled: $('presence').checked, idleMinutes: parseInt($('idleMinutes').value, 10) || 15,
                   sensitivity: parseInt($('sensitivity').value, 10) || 5 }
     };
@@ -256,6 +262,59 @@
   $('upd').onclick = function () { $('ver').textContent = 'Checking GitHub…'; api('POST', '/update').then(showUpdate).catch(function (e) { $('ver').textContent = e.message; }); };
   api('GET', '/update').then(showUpdate).catch(function () {});
 
+  // ---------- schedule editor
+  var rules = [];
+  var DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  var DAY_LABEL = { mon: 'Mo', tue: 'Tu', wed: 'We', thu: 'Th', fri: 'Fr', sat: 'Sa', sun: 'Su' };
+  var MODE_LABEL = { off: 'Off', on: 'Always on', auto: 'When someone is there' };
+  function updateOutside() {
+    $('outside').textContent = $('presence').checked
+      ? 'dark until someone is noticed, then on for ' + ($('idleMinutes').value || 10) + ' min.'
+      : 'always on (presence is off).';
+  }
+  function renderRules() {
+    var box = $('rules');
+    box.innerHTML = '';
+    if (!rules.length) box.innerHTML = '<p class="muted">No rules yet.</p>';
+    rules.forEach(function (r, i) {
+      var row = document.createElement('div');
+      row.className = 'acct';
+      var modeSel = '<select data-k="mode" style="min-height:44px;border-radius:10px;background:#0F0F11;color:var(--text);border:1px solid var(--line);padding:0 8px;font:inherit">' +
+        ['off', 'on', 'auto'].map(function (m) { return '<option value="' + m + '"' + (r.mode === m ? ' selected' : '') + '>' + MODE_LABEL[m] + '</option>'; }).join('') + '</select>';
+      var days = DAYS.map(function (d) {
+        var on = r.days.indexOf(d) >= 0;
+        return '<button class="small" data-day="' + d + '" style="min-width:42px;padding:0 6px;' +
+          (on ? 'background:var(--accent);color:#0B0B0C;border-color:var(--accent)' : '') + '">' + DAY_LABEL[d] + '</button>';
+      }).join('');
+      row.innerHTML = '<div class="grow" style="display:flex;flex-direction:column;gap:8px">' +
+        '<div class="row">' + modeSel +
+        '<input data-k="start" type="time" value="' + r.start + '" style="width:auto;min-height:44px">' +
+        '<span class="muted">to</span>' +
+        '<input data-k="end" type="time" value="' + r.end + '" style="width:auto;min-height:44px"></div>' +
+        '<div class="row" style="gap:6px">' + days + '</div></div>' +
+        '<button class="small" data-del>Remove</button>';
+      row.querySelector('[data-k=mode]').onchange = function (e) { r.mode = e.target.value; };
+      row.querySelector('[data-k=start]').onchange = function (e) { r.start = e.target.value; };
+      row.querySelector('[data-k=end]').onchange = function (e) { r.end = e.target.value; };
+      Array.prototype.forEach.call(row.querySelectorAll('[data-day]'), function (b) {
+        b.onclick = function () {
+          var d = b.getAttribute('data-day'), k = r.days.indexOf(d);
+          if (k >= 0) r.days.splice(k, 1); else r.days.push(d);
+          renderRules();
+        };
+      });
+      row.querySelector('[data-del]').onclick = function () { rules.splice(i, 1); renderRules(); };
+      box.appendChild(row);
+    });
+    updateOutside();
+  }
+  function addRule(mode, start, end) { rules.push({ mode: mode, start: start, end: end, days: DAYS.slice() }); renderRules(); }
+  $('addOff').onclick = function () { addRule('off', '00:00', '07:00'); };
+  $('addOn').onclick = function () { addRule('on', '18:00', '22:00'); };
+  $('addAuto').onclick = function () { addRule('auto', '07:00', '18:00'); };
+  $('presence').onchange = updateOutside;
+  $('idleMinutes').oninput = updateOutside;
+
   // ---------- presence meter + sleep buttons
   $('sensitivity').oninput = function () { $('sensVal').textContent = '(' + $('sensitivity').value + '/10)'; };
   function pct(db) { return Math.max(0, Math.min(100, (db + 90) / 90 * 100)); }
@@ -267,7 +326,10 @@
       else if (p.microphone === false) txt = 'No usable microphone: ' + (p.error || '');
       else if (!p.listening) txt = 'Starting…';
       else txt = 'Listening · now ' + p.levelDb + ' dB · room ' + p.floorDb + ' dB · triggers above ' + p.triggerDb + ' dB';
-      txt += s.sleeping ? ' · ASLEEP (' + s.reason + ')' : ' · awake';
+      var modeTxt = { on: 'always-on hours', off: 'off hours', auto: 'presence hours' }[s.mode] || s.mode;
+      if (s.sleeping) txt += ' · SCREEN OFF (' + ({ manual: 'sleep button', schedule: 'off hours', idle: 'nobody around' }[s.reason] || s.reason) + ')';
+      else txt += ' · screen on' + (s.onUntil ? ' until ' + new Date(s.onUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+      txt += ' · now: ' + modeTxt;
       if (!s.realScreenOff) txt += ' · screen dims to black (device owner turns it fully off)';
       $('mic').textContent = 'Microphone: ' + txt;
       $('meter').style.width = (p.listening ? pct(p.levelDb) : 0) + '%';

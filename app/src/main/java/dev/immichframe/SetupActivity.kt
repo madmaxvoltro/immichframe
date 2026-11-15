@@ -30,8 +30,6 @@ class SetupActivity : Activity() {
     private lateinit var interval: EditText
     private lateinit var lat: EditText
     private lateinit var lon: EditText
-    private lateinit var nightStart: EditText
-    private lateinit var nightEnd: EditText
     private lateinit var testResult: TextView
 
     private fun sw(id: Int) = findViewById<Switch>(id)
@@ -45,8 +43,6 @@ class SetupActivity : Activity() {
         interval = findViewById(R.id.interval)
         lat = findViewById(R.id.lat)
         lon = findViewById(R.id.lon)
-        nightStart = findViewById(R.id.nightStart)
-        nightEnd = findViewById(R.id.nightEnd)
         testResult = findViewById(R.id.testResult)
 
         // The frame screen edits the first account; add more from the web settings page.
@@ -55,15 +51,12 @@ class SetupActivity : Activity() {
         interval.setText(prefs.interval.toString())
         lat.setText(prefs.lat)
         lon.setText(prefs.lon)
-        nightStart.setText(prefs.nightStart)
-        nightEnd.setText(prefs.nightEnd)
         sw(R.id.smart).isChecked = prefs.smart
         sw(R.id.pairing).isChecked = prefs.pairing
         sw(R.id.ovClock).isChecked = prefs.showClock
         sw(R.id.ovWeather).isChecked = prefs.showWeather
         sw(R.id.ovInfo).isChecked = prefs.showInfo
         sw(R.id.ovAlbum).isChecked = prefs.showAlbum
-        sw(R.id.night).isChecked = prefs.nightEnabled
 
         findViewById<View>(R.id.btnSave).setOnClickListener { save(); finish() }
         findViewById<View>(R.id.btnTest).setOnClickListener { test() }
@@ -129,15 +122,12 @@ class SetupActivity : Activity() {
         prefs.interval = interval.text.toString().toIntOrNull() ?: 30
         prefs.lat = lat.text.toString()
         prefs.lon = lon.text.toString()
-        prefs.nightStart = nightStart.text.toString().ifBlank { "23:00" }
-        prefs.nightEnd = nightEnd.text.toString().ifBlank { "07:00" }
         prefs.smart = sw(R.id.smart).isChecked
         prefs.pairing = sw(R.id.pairing).isChecked
         prefs.showClock = sw(R.id.ovClock).isChecked
         prefs.showWeather = sw(R.id.ovWeather).isChecked
         prefs.showInfo = sw(R.id.ovInfo).isChecked
         prefs.showAlbum = sw(R.id.ovAlbum).isChecked
-        prefs.nightEnabled = sw(R.id.night).isChecked
         app.engine.reload()
     }
 

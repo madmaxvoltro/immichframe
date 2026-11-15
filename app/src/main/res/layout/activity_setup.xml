@@ -144,30 +144,13 @@
             <Switch android:id="@+id/ovWeather" style="@style/Toggle" android:text="Show weather" />
             <Switch android:id="@+id/ovInfo" style="@style/Toggle" android:text="Show photo info" />
             <Switch android:id="@+id/ovAlbum" style="@style/Toggle" android:text="Show album name" />
-            <Switch android:id="@+id/night" style="@style/Toggle" android:text="Screen off at night" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/nightStart"
-                    style="@style/Field"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:hint="23:00"
-                    android:inputType="time" />
-
-                <EditText
-                    android:id="@+id/nightEnd"
-                    style="@style/Field"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="16dp"
-                    android:layout_weight="1"
-                    android:hint="07:00"
-                    android:inputType="time" />
-            </LinearLayout>
+                android:layout_marginTop="8dp"
+                android:text="On/off schedule, presence, videos and more Immich accounts: open the web settings (QR code)."
+                android:textColor="#A8A49C"
+                android:textSize="14sp" />
 
             <TextView
                 android:id="@+id/testResult"

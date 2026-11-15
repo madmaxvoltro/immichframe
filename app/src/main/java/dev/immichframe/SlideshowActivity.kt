@@ -186,7 +186,7 @@ class SlideshowActivity : Activity(), Engine.Listener {
     /** Every touch counts as "someone is here". While asleep, the touch only wakes the frame. */
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
-            val wasOff = engine.sleeping && !engine.nightActive
+            val wasOff = engine.sleeping
             engine.activity("touch")
             if (wasOff) return true
         }

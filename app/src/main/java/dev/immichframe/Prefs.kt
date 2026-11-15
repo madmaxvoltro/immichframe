@@ -86,8 +86,22 @@ class Prefs(ctx: Context) {
     var presence: Boolean
         get() = p.getBoolean("presence", false)
         set(v) = put("presence", v)
+    /** Time rules (on / off / auto). Migrates the old single "night off" window. */
+    var schedule: List<Rule>
+        get() {
+            val raw = p.getString("schedule", null)
+            if (raw == null) {
+                val legacy = if (nightEnabled) listOf(Rule("off", nightStart, nightEnd, Rule.DAYS.toSet())) else emptyList()
+                schedule = legacy
+                return legacy
+            }
+            return try { Rule.listFromJson(JSONArray(raw)) } catch (e: Exception) { emptyList() }
+        }
+        set(v) = put("schedule", JSONArray().apply { v.forEach { put(it.toJson()) } }.toString())
+
+    /** How long the screen stays on after someone was noticed (sound or touch). */
     var idleMinutes: Int
-        get() = p.getInt("idleMinutes", 15)
+        get() = p.getInt("idleMinutes", 10)
         set(v) = put("idleMinutes", v.coerceIn(1, 720))
     var sensitivity: Int
         get() = p.getInt("sensitivity", 5)

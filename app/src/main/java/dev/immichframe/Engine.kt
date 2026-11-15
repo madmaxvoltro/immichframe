@@ -60,16 +60,17 @@ class Engine(private val app: App) {
     var screenH = 800; private set
     val landscape get() = screenW >= screenH
     var sleeping = false; private set
-    var sleepReason: String? = null; private set   // manual | idle
+    var sleepReason: String? = null; private set   // manual | schedule | idle
     var sleepSince = 0L; private set
     private var wakeJob: Job? = null
+    private var manualSleep = false
+    private var overrideUntil = 0L
     var lastActivity = System.currentTimeMillis(); private set
     val displayOn get() = !sleeping
     /** Screen dark for any reason: asleep or night hours. */
-    val screenOff get() = sleeping || nightActive
+    val screenOff get() = sleeping
     val presence = Presence(app) { activity("sound") }
     var brightness = -1; private set          // -1 = system default, else 0..100
-    var nightActive = false; private set
     var weatherTemp: Int? = null; private set
     var weatherDesc: String? = null; private set
 
@@ -93,8 +94,7 @@ class Engine(private val app: App) {
         started = true
         source = prefs.source
         scope.launch { lock.withLock { loadPool(true) }; advance() }
-        scope.launch { while (true) { checkNight(); delay(30_000) } }
-        scope.launch { while (true) { checkIdle(); delay(10_000) } }
+        scope.launch { while (true) { evaluate(); delay(10_000) } }
         updatePresence()
         scope.launch { while (true) { refreshWeather(); delay(30 * 60_000L) } }
     }
@@ -439,42 +439,77 @@ class Engine(private val app: App) {
 
     // ---------------------------------------------------------------- sleep / presence
 
-    /** Go to sleep. minutes = auto-wake after that long. reason "idle" is woken by sound; "manual" only by wake/touch/timer. */
-    suspend fun sleep(minutes: Int?, reason: String = "manual") = withContext(main) {
-        wakeJob?.cancel()
-        if (minutes != null && minutes > 0) wakeJob = scope.launch { delay(minutes * 60_000L); wake("timer") }
-        if (sleeping && sleepReason == "manual" && reason == "idle") return@withContext
-        sleeping = true; sleepReason = reason; sleepSince = System.currentTimeMillis()
-        tick?.cancel()
+    /** Screen mode right now from the schedule rules: on | off | auto. */
+    fun currentMode(): String {
+        val c = Calendar.getInstance()
+        prefs.schedule.firstOrNull { it.matches(c) }?.let { return it.mode }
+        return if (prefs.presence) "auto" else "on"
+    }
+
+    /**
+     * The one place that decides awake/asleep:
+     *   manual sleep (API)            → off until /wake, a touch, or its timer
+     *   override (touch / /wake)      → on for "stay on" minutes, even in an off window
+     *   rule "off"                    → off, sound does not wake it
+     *   rule "on"                     → on
+     *   auto                          → on for "stay on" minutes after the last sound/touch
+     */
+    private fun evaluate() {
+        val now = System.currentTimeMillis()
+        val mode = currentMode()
+        val (off, reason) = when {
+            manualSleep -> true to "manual"
+            now < overrideUntil -> false to null
+            mode == "off" -> true to "schedule"
+            mode == "on" -> false to null
+            now - lastActivity > prefs.idleMinutes * 60_000L -> true to "idle"
+            else -> false to null
+        }
+        if (off == sleeping && reason == sleepReason) return
+        val wasAsleep = sleeping
+        sleeping = off; sleepReason = reason
+        if (off) { sleepSince = now; tick?.cancel() }
         applyPower()
+        if (wasAsleep && !off && !paused) schedule(1_500)
         notifyState()
         emit("sleep", sleepJson())
     }
 
-    suspend fun wake(why: String = "api") = withContext(main) {
+    private fun stayOnMs() = prefs.idleMinutes * 60_000L
+
+    /** Go to sleep now. minutes = wake again after that long. Sound won't wake it; /wake or a touch will. */
+    suspend fun sleep(minutes: Int?, @Suppress("UNUSED_PARAMETER") reason: String = "manual") = withContext(main) {
         wakeJob?.cancel()
-        lastActivity = System.currentTimeMillis()
-        if (!sleeping) return@withContext
-        sleeping = false; sleepReason = null
-        applyPower()
-        if (!paused) schedule(if (nightActive) null else 1_500)
-        notifyState()
-        emit("sleep", sleepJson().put("wokeBy", why))
+        manualSleep = true
+        overrideUntil = 0
+        if (minutes != null && minutes > 0) wakeJob = scope.launch {
+            delay(minutes * 60_000L)
+            manualSleep = false; lastActivity = System.currentTimeMillis(); evaluate()
+        }
+        evaluate()
     }
 
-    /** Touch, sound, API use. Called from any thread. */
+    /** Wake now. Outside "on" hours it stays on for the "stay on" minutes, then the schedule takes over again. */
+    suspend fun wake(@Suppress("UNUSED_PARAMETER") why: String = "api") = withContext(main) {
+        wakeJob?.cancel()
+        manualSleep = false
+        val now = System.currentTimeMillis()
+        lastActivity = now
+        overrideUntil = now + stayOnMs()
+        evaluate()
+    }
+
+    /** Sound or touch. Called from any thread. Sound never wakes an "off" window or a manual sleep; a touch does. */
     fun activity(kind: String) {
         scope.launch {
-            lastActivity = System.currentTimeMillis()
-            if (!sleeping || nightActive) return@launch
-            // idle sleep wakes on anything; manual sleep only on touch
-            if (sleepReason == "idle" || kind == "touch") wake(kind)
+            val now = System.currentTimeMillis()
+            lastActivity = now
+            if (kind == "touch" && (manualSleep || currentMode() == "off")) {
+                manualSleep = false
+                overrideUntil = now + stayOnMs()
+            }
+            evaluate()
         }
-    }
-
-    private suspend fun checkIdle() {
-        if (!prefs.presence || sleeping || nightActive) return
-        if (System.currentTimeMillis() - lastActivity > prefs.idleMinutes * 60_000L) sleep(null, "idle")
     }
 
     fun updatePresence() {
@@ -488,8 +523,10 @@ class Engine(private val app: App) {
 
     fun sleepJson(): JSONObject = JSONObject()
         .put("sleeping", sleeping).put("reason", sleepReason).put("since", sleepSince)
-        .put("night", nightActive).put("lastActivity", lastActivity)
-        .put("idleMinutes", prefs.idleMinutes).put("autoSleep", prefs.presence)
+        .put("mode", currentMode()).put("lastActivity", lastActivity)
+        .put("onUntil", if (!sleeping && currentMode() != "on")
+            maxOf(overrideUntil, lastActivity + stayOnMs()) else JSONObject.NULL)
+        .put("stayOnMinutes", prefs.idleMinutes).put("presenceSensing", prefs.presence)
         .put("realScreenOff", app.power.canLock)
         .put("presence", presence.json())
 
@@ -565,26 +602,6 @@ class Engine(private val app: App) {
         return diff * 60_000L - c.get(Calendar.SECOND) * 1000L
     }
 
-    private fun checkNight() {
-        var active = false
-        if (prefs.nightEnabled) {
-            val s = minutes(prefs.nightStart)
-            val e = minutes(prefs.nightEnd)
-            if (s != null && e != null) {
-                val c = Calendar.getInstance()
-                val n = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
-                active = if (s <= e) n in s until e else n >= s || n < e
-            }
-        }
-        if (active != nightActive) {
-            nightActive = active
-            if (!active) lastActivity = System.currentTimeMillis()   // don't idle-sleep right after night ends
-            applyPower()
-            if (!active && !paused) schedule(1_000)
-            emit("display", JSONObject().put("night", active))
-        }
-    }
-
     private suspend fun refreshWeather() {
         val lat = prefs.lat
         val lon = prefs.lon
@@ -635,7 +652,7 @@ class Engine(private val app: App) {
         .put("displayOn", displayOn)
         .put("sleeping", sleeping)
         .put("sleepReason", sleepReason)
-        .put("night", nightActive)
+        .put("mode", currentMode())
         .put("brightness", brightness)
         .put("weather", weatherTemp?.let { JSONObject().put("temp", it).put("desc", weatherDesc) })
         .put("version", BuildConfig.VERSION_NAME)
@@ -650,7 +667,7 @@ class Engine(private val app: App) {
         .put("maxVideo", prefs.maxVideo)
         .put("overlays", JSONObject().put("clock", prefs.showClock).put("weather", prefs.showWeather)
             .put("info", prefs.showInfo).put("album", prefs.showAlbum))
-        .put("night", JSONObject().put("enabled", prefs.nightEnabled).put("start", prefs.nightStart).put("end", prefs.nightEnd))
+        .put("schedule", JSONArray().apply { prefs.schedule.forEach { put(it.toJson()) } })
         .put("presence", JSONObject().put("enabled", prefs.presence).put("idleMinutes", prefs.idleMinutes)
             .put("sensitivity", prefs.sensitivity))
         .put("lat", prefs.lat).put("lon", prefs.lon)
@@ -673,11 +690,9 @@ class Engine(private val app: App) {
             if (ov.has("info")) prefs.showInfo = ov.getBoolean("info")
             if (ov.has("album")) prefs.showAlbum = ov.getBoolean("album")
         }
-        o.optJSONObject("night")?.let { n ->
-            if (n.has("enabled")) prefs.nightEnabled = n.getBoolean("enabled")
-            n.optStr("start")?.let { prefs.nightStart = it }
-            n.optStr("end")?.let { prefs.nightEnd = it }
-            checkNight()
+        if (o.has("schedule")) {
+            prefs.schedule = Rule.listFromJson(o.optJSONArray("schedule"))   // throws on bad times/modes → 400
+            lastActivity = System.currentTimeMillis()
         }
         o.optJSONObject("presence")?.let { pr ->
             if (pr.has("idleMinutes")) prefs.idleMinutes = pr.getInt("idleMinutes")
@@ -689,7 +704,8 @@ class Engine(private val app: App) {
         o.optStr("lat")?.let { prefs.lat = it }
         o.optStr("lon")?.let { prefs.lon = it }
         if (o.has("lat") || o.has("lon") || o.optJSONObject("overlays")?.has("weather") == true) refreshWeather()
-        if (!paused) schedule(null)
+        evaluate()
+        if (!paused && !sleeping) schedule(null)
         notifyState()
         settingsJson()
     }
