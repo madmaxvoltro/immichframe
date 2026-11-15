@@ -16,6 +16,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+# Windows PowerShell treats git/gh progress on stderr as errors; run natives and check exit codes instead.
+function Run([string]$exe, [string[]]$argv) {
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $exe @argv 2>&1 | ForEach-Object { "$_" }
+    $code = $LASTEXITCODE; $ErrorActionPreference = $old
+    if ($code -ne 0) { throw "$exe $($argv -join ' ') failed ($code)" }
+}
+
 if (-not (Test-Path "keystore\frame.keystore")) { throw "keystore\frame.keystore missing - restore your backup, or updates won't install over the old app." }
 
 # --- version
@@ -37,12 +45,12 @@ $apk = "dist\immichframe-v$Version.apk"
 Copy-Item app\build\outputs\apk\release\app-release.apk $apk -Force
 
 # --- git + GitHub release
-git add -A
-git commit -m "Release v$Version" | Out-Null
-git tag "v$Version"
-git push origin HEAD --tags
+Run git @("add", "-A")
+Run git @("commit", "-q", "-m", "Release v$Version")
+Run git @("tag", "v$Version")
+Run git @("push", "-q", "origin", "HEAD", "--tags")
 if (-not $Notes) { $Notes = "Immich Frame v$Version" }
-gh release create "v$Version" $apk --title "v$Version" --notes $Notes
+Run gh @("release", "create", "v$Version", $apk, "--title", "v$Version", "--notes", $Notes)
 Write-Host "Published v$Version. Frames pick it up within 6 hours, or press 'Check for updates' on the remote." -ForegroundColor Green
 
 # --- optional direct install
