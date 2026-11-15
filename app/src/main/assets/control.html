@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame remote</title>
+<style>
+  :root { --bg:#0B0B0C; --card:#141416; --line:#2A2927; --text:#F4F1EA; --muted:#A8A49C; --accent:#F2B544; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:560px; margin:0 auto; padding:20px 16px 48px; display:flex; flex-direction:column; gap:18px; }
+  h1 { font-size:22px; margin:0; }
+  .muted { color:var(--muted); font-size:14px; }
+  .now { border-radius:18px; overflow:hidden; background:var(--card); border:1px solid var(--line); }
+  .now img { width:100%; display:block; max-height:320px; object-fit:cover; background:#000; }
+  .now .meta { padding:12px 16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button, select, input { font:inherit; color:var(--text); }
+  button { flex:1; min-height:48px; border-radius:12px; border:1px solid var(--line); background:var(--card); cursor:pointer; padding:0 14px; }
+  button.primary { background:var(--accent); color:#0B0B0C; border-color:var(--accent); font-weight:600; }
+  button.liked { background:var(--accent); color:#0B0B0C; }
+  select, input { width:100%; min-height:48px; border-radius:12px; border:1px solid var(--line); background:var(--card); padding:0 12px; }
+  label { font-size:14px; color:var(--muted); display:block; margin-bottom:6px; }
+  .err { color:#FF9B8F; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1 id="name">Photo frame</h1>
+    <div class="muted" id="status">Connecting…</div>
+  </div>
+
+  <div class="now">
+    <img id="thumb" alt="Current photo">
+    <div class="meta"><div id="place"></div><div class="muted" id="meta"></div></div>
+  </div>
+
+  <div class="row">
+    <button id="prev" aria-label="Previous">‹ Prev</button>
+    <button id="pause" class="primary">Pause</button>
+    <button id="next" aria-label="Next">Next ›</button>
+  </div>
+  <div class="row">
+    <button id="like">♥ Like</button>
+    <button id="less">Show less</button>
+    <button id="hide">Never show</button>
+  </div>
+
+  <div>
+    <label for="ask">Ask for photos</label>
+    <div class="row">
+      <input id="ask" placeholder="Emma at the beach, snow, birthday cake…" style="flex:3">
+      <button id="go" class="primary">Show</button>
+    </div>
+  </div>
+
+  <div>
+    <label for="album">Album</label>
+    <select id="album"><option value="">Loading…</option></select>
+  </div>
+  <div>
+    <label for="person">Person</label>
+    <select id="person"><option value="">Loading…</option></select>
+  </div>
+  <div class="row">
+    <button data-src="all">All photos</button>
+    <button data-src="favorites">Favorites</button>
+    <button data-src="memories">On this day</button>
+  </div>
+  <div class="row">
+    <button id="off">Screen off</button>
+    <button id="on">Screen on</button>
+  </div>
+  <div class="row">
+    <button id="update">Check for updates</button>
+  </div>
+  <div class="muted" id="updateInfo"></div>
+  <div class="muted">API: <code>/api/...</code> · <a href="/setup" style="color:var(--accent)">Immich connection</a></div>
+</main>
+<script>
+  function showUpdate(u) {
+    document.getElementById('updateInfo').textContent = 'Version ' + u.current +
+      (u.latest ? ' · latest ' + u.latest : '') + ' · ' + u.state + (u.error ? ' (' + u.error + ')' : '');
+  }
+  document.getElementById('update').onclick = function () {
+    document.getElementById('updateInfo').textContent = 'Checking GitHub…';
+    fetch('/api/update', { method: 'POST' }).then(function (r) { return r.json(); }).then(showUpdate);
+  };
+  fetch('/api/update').then(function (r) { return r.json(); }).then(showUpdate).catch(function () {});
+
+
+  var $ = function (id) { return document.getElementById(id); };
+  var state = {};
+
+  function api(method, path, body) {
+    return fetch('/api' + path, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); });
+  }
+  function fail(e) { $('status').textContent = String(e.message || e); $('status').className = 'err'; }
+
+  function refresh() {
+    api('GET', '/status').then(function (s) {
+      state = s;
+      $('name').textContent = s.name;
+      $('status').className = 'muted';
+      $('status').textContent = s.source.name + ' · ' + s.status + (s.paused ? ' · paused' : '') + ' · ' + s.orientation;
+      $('pause').textContent = s.paused ? 'Play' : 'Pause';
+    }).catch(fail);
+    api('GET', '/now').then(function (n) {
+      var a = n.assets[0];
+      if (!a) return;
+      $('thumb').src = n.thumbnail + '?v=' + n.shownAt;
+      $('place').textContent = a.place || '';
+      $('meta').textContent = [(a.date || '').slice(0, 10)].concat(a.people || []).filter(Boolean).join(' · ');
+      $('like').className = a.liked ? 'liked' : '';
+      $('like').textContent = a.liked ? '♥ Liked' : '♥ Like';
+    }).catch(function () {});
+  }
+
+  function fill(sel, path, type) {
+    api('GET', path).then(function (list) {
+      sel.innerHTML = '<option value="">Choose…</option>';
+      list.forEach(function (x) {
+        var o = document.createElement('option');
+        o.value = x.id; o.textContent = x.name + (x.count ? ' (' + x.count + ')' : '');
+        sel.appendChild(o);
+      });
+      sel.onchange = function () {
+        if (!sel.value) return;
+        api('POST', '/play', { source: { type: type, id: sel.value, name: sel.options[sel.selectedIndex].textContent.replace(/ \(\d+\)$/, '') } }).then(refresh).catch(fail);
+      };
+    }).catch(fail);
+  }
+
+  $('prev').onclick = function () { api('POST', '/prev').then(refresh).catch(fail); };
+  $('next').onclick = function () { api('POST', '/next').then(refresh).catch(fail); };
+  $('pause').onclick = function () { api('POST', state.paused ? '/resume' : '/pause').then(refresh).catch(fail); };
+  $('like').onclick = function () { api('POST', '/like', { like: $('like').className !== 'liked' }).then(refresh).catch(fail); };
+  $('less').onclick = function () { api('POST', '/less').then(refresh).catch(fail); };
+  $('hide').onclick = function () { api('POST', '/hide').then(refresh).catch(fail); };
+  $('go').onclick = function () {
+    var q = $('ask').value.trim(); if (!q) return;
+    api('POST', '/ask', { q: q }).then(function (r) { $('status').textContent = r.matched + ' photos for “' + q + '”'; setTimeout(refresh, 1500); }).catch(fail);
+  };
+  $('off').onclick = function () { api('POST', '/display', { on: false }).catch(fail); };
+  $('on').onclick = function () { api('POST', '/display', { on: true }).catch(fail); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-src]'), function (b) {
+    b.onclick = function () { api('POST', '/play', { source: { type: b.getAttribute('data-src') } }).then(refresh).catch(fail); };
+  });
+
+  fill($('album'), '/albums', 'album');
+  fill($('person'), '/people', 'person');
+  refresh();
+  try {
+    var es = new EventSource('/api/events');
+    es.addEventListener('photo', refresh);
+    es.addEventListener('liked', refresh);
+    es.addEventListener('state', refresh);
+  } catch (e) { setInterval(refresh, 10000); }
+</script>
+</body>
+</html>

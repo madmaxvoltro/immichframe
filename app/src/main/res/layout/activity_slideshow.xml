@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B0B0C">
+
+    <!-- photos are added here by code, crossfading -->
+    <FrameLayout
+        android:id="@+id/stage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <View
+        android:id="@+id/scrimTop"
+        android:layout_width="match_parent"
+        android:layout_height="160dp"
+        android:layout_gravity="top"
+        android:background="@drawable/scrim_top" />
+
+    <View
+        android:id="@+id/scrimBottom"
+        android:layout_width="match_parent"
+        android:layout_height="320dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/scrim_bottom" />
+
+    <!-- album chip -->
+    <LinearLayout
+        android:id="@+id/albumChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="40dp"
+        android:layout_marginTop="32dp"
+        android:background="@drawable/bg_pill"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="8dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_album" />
+
+        <TextView
+            android:id="@+id/albumName"
+            style="@style/Overlay"
+            android:layout_marginStart="10dp"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium" />
+    </LinearLayout>
+
+    <!-- weather -->
+    <LinearLayout
+        android:id="@+id/weatherBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="28dp"
+        android:layout_marginEnd="40dp"
+        android:gravity="end"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/temp"
+            style="@style/Overlay"
+            android:fontFamily="sans-serif-light"
+            android:textSize="34sp" />
+
+        <TextView
+            android:id="@+id/weatherDesc"
+            style="@style/Overlay"
+            android:alpha="0.8"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- clock -->
+    <LinearLayout
+        android:id="@+id/clockBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="40dp"
+        android:layout_marginBottom="40dp"
+        android:orientation="vertical">
+
+        <TextClock
+            android:id="@+id/clock"
+            style="@style/Overlay"
+            android:fontFamily="sans-serif-light"
+            android:format12Hour="HH:mm"
+            android:format24Hour="HH:mm"
+            android:includeFontPadding="false"
+            android:letterSpacing="-0.03"
+            android:textSize="112sp" />
+
+        <TextClock
+            android:id="@+id/date"
+            style="@style/Overlay"
+            android:alpha="0.85"
+            android:format12Hour="EEEE d MMMM"
+            android:format24Hour="EEEE d MMMM"
+            android:paddingStart="6dp"
+            android:textSize="22sp" />
+    </LinearLayout>
+
+    <!-- photo info -->
+    <LinearLayout
+        android:id="@+id/infoBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="40dp"
+        android:layout_marginBottom="48dp"
+        android:gravity="end"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/place"
+            style="@style/Overlay"
+            android:drawableStart="@drawable/ic_pin"
+            android:drawablePadding="8dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center_vertical"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/meta"
+            style="@style/Overlay"
+            android:layout_marginTop="6dp"
+            android:alpha="0.8"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/likedTag"
+            style="@style/Overlay"
+            android:layout_marginTop="6dp"
+            android:drawableStart="@drawable/ic_heart_fill"
+            android:drawablePadding="6dp"
+            android:drawableTint="#F2B544"
+            android:gravity="center_vertical"
+            android:text="Liked"
+            android:textColor="#F2B544"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- progress -->
+    <FrameLayout
+        android:id="@+id/progressTrack"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_gravity="bottom"
+        android:background="#1FF4F1EA">
+
+        <View
+            android:id="@+id/progressFill"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#B3F4F1EA"
+            android:pivotX="0"
+            android:scaleX="0" />
+    </FrameLayout>
+
+    <!-- status message (setup needed, loading, errors) -->
+    <TextView
+        android:id="@+id/message"
+        style="@style/Overlay"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:maxWidth="720dp"
+        android:padding="24dp"
+        android:textSize="22sp"
+        android:visibility="gone" />
+
+    <!-- tap controls -->
+    <FrameLayout
+        android:id="@+id/controls"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#8C0B0B0C"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="32dp"
+            android:paddingTop="28dp"
+            android:paddingEnd="32dp">
+
+            <Button
+                android:id="@+id/btnSource"
+                style="@style/PillButton"
+                android:drawableStart="@drawable/ic_album"
+                android:text="All photos" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_circle_outline"
+                android:contentDescription="Settings"
+                android:src="@drawable/ic_gear" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/btnPrev"
+                android:layout_width="88dp"
+                android:layout_height="88dp"
+                android:background="@drawable/bg_circle_soft"
+                android:contentDescription="Previous photo"
+                android:scaleType="center"
+                android:src="@drawable/ic_prev" />
+
+            <ImageButton
+                android:id="@+id/btnPause"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_marginStart="56dp"
+                android:layout_marginEnd="56dp"
+                android:background="@drawable/bg_circle_solid"
+                android:contentDescription="Pause"
+                android:scaleType="center"
+                android:src="@drawable/ic_pause"
+                android:tint="#0B0B0C" />
+
+            <ImageButton
+                android:id="@+id/btnNext"
+                android:layout_width="88dp"
+                android:layout_height="88dp"
+                android:background="@drawable/bg_circle_soft"
+                android:contentDescription="Next photo"
+                android:scaleType="center"
+                android:src="@drawable/ic_next" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tasteRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="40dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnLike"
+                style="@style/PillButton"
+                android:drawableStart="@drawable/ic_heart"
+                android:text="Like" />
+
+            <Button
+                android:id="@+id/btnLess"
+                style="@style/PillButton"
+                android:layout_marginStart="16dp"
+                android:drawableStart="@drawable/ic_less"
+                android:text="Show less like this" />
+
+            <Button
+                android:id="@+id/btnHide"
+                style="@style/PillButton"
+                android:layout_marginStart="16dp"
+                android:drawableStart="@drawable/ic_hide"
+                android:text="Never show" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- source picker -->
+    <LinearLayout
+        android:id="@+id/picker"
+        android:layout_width="440dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="#141416"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="28dp"
+            android:paddingTop="24dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="12dp">
+
+            <TextView
+                style="@style/Overlay"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:shadowRadius="0"
+                android:text="What to show"
+                android:textSize="24sp" />
+
+            <ImageButton
+                android:id="@+id/btnClosePicker"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_circle_soft"
+                android:contentDescription="Close"
+                android:src="@drawable/ic_close" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/tabs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp" />
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="24dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="24dp">
+
+            <EditText
+                android:id="@+id/askField"
+                style="@style/Field"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:hint="Ask: beach with Emma, snow, dogs…"
+                android:imeOptions="actionSearch"
+                android:inputType="text" />
+
+            <ImageButton
+                android:id="@+id/btnAsk"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="10dp"
+                android:background="@drawable/bg_circle_soft"
+                android:contentDescription="Search"
+                android:src="@drawable/ic_search" />
+        </LinearLayout>
+
+        <ListView
+            android:id="@+id/list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_weight="1"
+            android:divider="@null"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp" />
+    </LinearLayout>
+
+    <!-- night / screen off -->
+    <View
+        android:id="@+id/nightCover"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+</FrameLayout>
