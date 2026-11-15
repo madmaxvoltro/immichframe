@@ -20,7 +20,10 @@ import java.util.Calendar
 import java.util.Random
 import java.util.concurrent.CopyOnWriteArrayList
 
-class Slide(val assets: List<Asset>, val bitmaps: List<Bitmap>)
+class Slide(val assets: List<Asset>, val bitmaps: List<Bitmap>) {
+    /** A single video (videos are never paired). bitmaps[0] is its poster frame. */
+    val video: Asset? get() = assets.singleOrNull()?.takeIf { it.video }
+}
 
 /**
  * The brain of the frame. All state lives on the main thread; public suspend functions
@@ -35,7 +38,6 @@ class Engine(private val app: App) {
 
     private val tag = "Engine"
     private val prefs get() = app.prefs
-    private val immich get() = app.immich
     private val stats get() = app.stats
     private val cache get() = app.cache
     private val main = Dispatchers.Main.immediate
@@ -91,6 +93,7 @@ class Engine(private val app: App) {
     fun reload() {
         if (!started) { ensureStarted(); return }
         scope.launch {
+            app.rebuildClients()
             source = prefs.source
             fwd.clear(); invalidate()
             albumCache = null; peopleCache = null
@@ -139,13 +142,44 @@ class Engine(private val app: App) {
         emit("state", statusJson())
     }
 
-    private fun fetch(s: Source): List<Asset> = when (s.type) {
-        "album" -> immich.metadata(JSONObject().put("albumIds", JSONArray().put(s.id)))
-        "person" -> immich.metadata(JSONObject().put("personIds", JSONArray().put(s.id)))
-        "favorites" -> immich.metadata(JSONObject().put("isFavorite", true))
-        "memories" -> immich.memories()
-        "search" -> immich.smart(s.query ?: s.name)
-        else -> immich.random(500)
+    /** Fetch from every account and merge. One failing account doesn't stop the others. */
+    private fun fetch(s: Source): List<Asset> {
+        val clients = app.clients
+        val videos = prefs.videos
+        val out = ArrayList<Asset>()
+        var ok = 0
+        var lastErr: Exception? = null
+        for (c in clients) {
+            try { out.addAll(fetchOne(c, s, videos, clients.size)); ok++ } catch (e: Exception) {
+                Log.w(tag, "fetch from ${c.account.label} failed", e); lastErr = e
+            }
+        }
+        if (ok == 0 && lastErr != null) throw lastErr
+        return out
+    }
+
+    private fun fetchOne(c: Immich, s: Source, videos: Boolean, n: Int): List<Asset> = when (s.type) {
+        // Album / person ids are "acct:id,acct:id,…": everything with that name in every account.
+        // Each id is searched on its own and unioned (Immich ANDs multiple ids in one search).
+        "album" -> refs(s.id, c).flatMap { c.metadata(JSONObject().put("albumIds", JSONArray().put(it)), videos) }
+        "person" -> refs(s.id, c).flatMap { c.metadata(JSONObject().put("personIds", JSONArray().put(it)), videos) }
+        "favorites" -> c.metadata(JSONObject().put("isFavorite", true), videos)
+        "memories" -> c.memories(videos)
+        "search" -> c.smart(s.query ?: s.name, videos)
+        else -> c.random(maxOf(100, 500 / maxOf(1, n)), videos)
+    }
+
+    /** Ids in a merged ref string that belong to this account. Plain ids (old format) go to the first account. */
+    private fun refs(id: String?, c: Immich): List<String> {
+        if (id.isNullOrBlank()) return emptyList()
+        return id.split(",").mapNotNull { r ->
+            val i = r.indexOf(':')
+            when {
+                i < 0 -> if (c === app.clients.firstOrNull()) r.trim() else null
+                r.substring(0, i) == c.id -> r.substring(i + 1).trim()
+                else -> null
+            }
+        }
     }
 
     private suspend fun advance() = lock.withLock {
@@ -193,15 +227,15 @@ class Engine(private val app: App) {
         val now = System.currentTimeMillis()
         val w = DoubleArray(pool.size) { Shuffle.weight(pool[it], rows[pool[it].id], liked, now, smart) }
         val first = Shuffle.pick(pool, w, exclude, rnd) ?: return emptyList()
-        if (!pair || first.portraitHint == false) return listOf(first)
-        val (fw, fh) = cache.bounds(cache.ensure(first.id))
+        if (!pair || first.video || first.portraitHint == false) return listOf(first)
+        val (fw, fh) = cache.bounds(cache.ensure(first))
         if (fh <= fw) return listOf(first)
         val ex = HashSet(exclude).apply { add(first.id) }
         repeat(10) {
             val c = Shuffle.pick(pool, w, ex, rnd) ?: return listOf(first)
             ex.add(c.id)
-            if (c.portraitHint == false) return@repeat
-            val (cw, ch) = cache.bounds(cache.ensure(c.id))
+            if (c.video || c.portraitHint == false) return@repeat
+            val (cw, ch) = cache.bounds(cache.ensure(c))
             if (ch > cw) return listOf(first, c)
         }
         return listOf(first)
@@ -216,10 +250,10 @@ class Engine(private val app: App) {
     }
 
     private fun renderBlocking(list: List<Asset>, w: Int, h: Int): Slide {
-        val pair = list.size >= 2 && w >= h
+        val pair = list.size >= 2 && w >= h && list.none { it.video }
         val use = if (pair) list.take(2) else list.take(1)
         val tw = if (pair) w / 2 else w
-        val bms = use.map { cache.decode(cache.ensure(it.id), tw, h) ?: throw IOException("cannot decode ${it.id}") }
+        val bms = use.map { cache.decode(cache.ensure(it), tw, h) ?: throw IOException("cannot decode ${it.id}") }
         return Slide(use, bms)
     }
 
@@ -237,15 +271,29 @@ class Engine(private val app: App) {
         scope.launch(io) { ids.forEach { runCatching { stats.shown(it) } } }
         emit("photo", nowJson())
         notifyState()
-        schedule(null)
+        // videos advance when playback ends (videoEnded); the timer is only a safety net
+        schedule(slide.video?.let { videoMs(it) + 3_000 })
         startPrefetch()
+    }
+
+    /** How long a video slide runs: its length, capped at maxVideo seconds. */
+    fun videoMs(a: Asset): Long {
+        val max = prefs.maxVideo.toDouble()
+        val d = if (a.duration > 0) minOf(a.duration, max) else max
+        return (d * 1000).toLong()
+    }
+
+    /** Called by the player when a video finished, failed, or hit the length cap. */
+    fun videoEnded(assetId: String) {
+        if (current?.video?.id != assetId || paused) return
+        scope.launch { tick?.cancel(); advance() }
     }
 
     private fun schedule(override: Long?) {
         tick?.cancel()
         if (paused) return
         val now = System.currentTimeMillis()
-        val ms = override ?: maxOf(prefs.interval * 1000L, pinUntil - now)
+        val ms = override ?: current?.video?.let { videoMs(it) + 3_000 } ?: maxOf(prefs.interval * 1000L, pinUntil - now)
         tick = scope.launch {
             delay(ms)
             if (!displayOn || nightActive) { schedule(60_000); return@launch }
@@ -299,8 +347,10 @@ class Engine(private val app: App) {
     private fun targets(assetId: String?): List<Asset> {
         if (assetId == null) return current?.assets ?: emptyList()
         val a = current?.assets?.find { it.id == assetId } ?: pool.find { it.id == assetId }
-        return listOf(a ?: Asset(assetId, null, null, null, emptyList(), false, 0, 0))
+        return listOf(a ?: Asset(assetId, app.clients.firstOrNull()?.id ?: "", false, 0.0, null, null, null, emptyList(), false, 0, 0))
     }
+
+    fun findAsset(id: String): Asset? = current?.assets?.find { it.id == id } ?: pool.find { it.id == id }
 
     suspend fun like(assetId: String?, value: Boolean = true): List<String> = withContext(main) {
         val t = targets(assetId)
@@ -308,7 +358,7 @@ class Engine(private val app: App) {
         withContext(io) {
             t.forEach {
                 stats.setLike(it.id, value, it.people)
-                try { immich.setFavorite(it.id, value) } catch (e: Exception) { Log.w(tag, "favorite sync failed", e) }
+                try { app.client(it.acct)?.setFavorite(it.id, value) } catch (e: Exception) { Log.w(tag, "favorite sync failed", e) }
             }
         }
         invalidate(); startPrefetch()
@@ -336,7 +386,9 @@ class Engine(private val app: App) {
     }
 
     suspend fun showAsset(assetId: String, seconds: Int?): Boolean = withContext(main) {
-        val a = try { withContext(io) { immich.asset(assetId) } } catch (e: Exception) { null } ?: return@withContext false
+        val a = withContext(io) {
+            app.clients.firstNotNullOfOrNull { c -> try { c.asset(assetId) } catch (e: Exception) { null } }
+        } ?: return@withContext false
         lock.withLock {
             val s = render(listOf(a)) ?: return@withLock false
             pinUntil = if (seconds != null && seconds > 0) System.currentTimeMillis() + seconds * 1000L else 0
@@ -374,18 +426,42 @@ class Engine(private val app: App) {
         emit("display", JSONObject().put("on", displayOn).put("brightness", brightness))
     }
 
+    /** Albums from all accounts, merged by name: [{id: "acct:id,acct:id", name, count, sources}] */
     suspend fun albums(): JSONArray {
         albumCache?.let { if (System.currentTimeMillis() - it.first < 300_000) return it.second }
-        val a = withContext(io) { immich.albums() }
+        val a = withContext(io) { mergeByName { it.albums() } }
         albumCache = System.currentTimeMillis() to a
         return a
     }
 
+    /** People from all accounts merged by name: two "Dave"s (same or different account) become one entry. */
     suspend fun people(): JSONArray {
         peopleCache?.let { if (System.currentTimeMillis() - it.first < 300_000) return it.second }
-        val a = withContext(io) { immich.people() }
+        val a = withContext(io) { mergeByName { it.people() } }
         peopleCache = System.currentTimeMillis() to a
         return a
+    }
+
+    private fun mergeByName(list: (Immich) -> List<JSONObject>): JSONArray {
+        class M(val name: String) { val refs = ArrayList<String>(); var count = 0; val accts = LinkedHashSet<String>() }
+        val map = LinkedHashMap<String, M>()
+        for (c in app.clients) {
+            val items = try { list(c) } catch (e: Exception) { Log.w(tag, "list from ${c.account.label} failed", e); continue }
+            for (o in items) {
+                val name = o.optString("name").trim()
+                if (name.isEmpty()) continue
+                val m = map.getOrPut(name.lowercase()) { M(name) }
+                m.refs.add("${c.id}:${o.optString("id")}")
+                m.count += o.optInt("count", 0)
+                m.accts.add(c.account.label)
+            }
+        }
+        val out = JSONArray()
+        map.values.sortedBy { it.name.lowercase() }.forEach { m ->
+            out.put(JSONObject().put("id", m.refs.joinToString(",")).put("name", m.name)
+                .put("count", m.count).put("matches", m.refs.size).put("accounts", JSONArray(m.accts.toList())))
+        }
+        return out
     }
 
     /** Resolve {type, id?, name?, query?}; album/person can be given by name only. */
@@ -482,6 +558,7 @@ class Engine(private val app: App) {
         .put("status", status)
         .put("error", lastError)
         .put("configured", prefs.configured)
+        .put("accounts", app.clients.size)
         .put("source", source.toJson())
         .put("poolSize", pool.size)
         .put("paused", paused)
@@ -498,6 +575,9 @@ class Engine(private val app: App) {
         .put("interval", prefs.interval)
         .put("smart", prefs.smart)
         .put("pairing", prefs.pairing)
+        .put("videos", prefs.videos)
+        .put("videoSound", prefs.videoSound)
+        .put("maxVideo", prefs.maxVideo)
         .put("overlays", JSONObject().put("clock", prefs.showClock).put("weather", prefs.showWeather)
             .put("info", prefs.showInfo).put("album", prefs.showAlbum))
         .put("night", JSONObject().put("enabled", prefs.nightEnabled).put("start", prefs.nightStart).put("end", prefs.nightEnd))
@@ -509,6 +589,12 @@ class Engine(private val app: App) {
         if (o.has("interval")) prefs.interval = o.getInt("interval")
         if (o.has("smart")) prefs.smart = o.getBoolean("smart")
         if (o.has("pairing")) { prefs.pairing = o.getBoolean("pairing"); invalidate(); startPrefetch() }
+        if (o.has("videoSound")) prefs.videoSound = o.getBoolean("videoSound")
+        if (o.has("maxVideo")) prefs.maxVideo = o.getInt("maxVideo")
+        if (o.has("videos") && o.getBoolean("videos") != prefs.videos) {
+            prefs.videos = o.getBoolean("videos")
+            scope.launch { invalidate(); lock.withLock { loadPool(true) }; advance() }
+        }
         o.optJSONObject("overlays")?.let { ov ->
             if (ov.has("clock")) prefs.showClock = ov.getBoolean("clock")
             if (ov.has("weather")) prefs.showWeather = ov.getBoolean("weather")

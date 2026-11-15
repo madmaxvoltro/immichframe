@@ -2,6 +2,7 @@ package dev.immichframe
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONArray
 import org.json.JSONObject
 
 fun JSONObject.optStr(k: String): String? =
@@ -53,12 +54,43 @@ class Prefs(ctx: Context) {
         e.apply()
     }
 
-    var server: String
-        get() = str("server", "").trim().trimEnd('/')
-        set(v) = put("server", v.trim().trimEnd('/').removeSuffix("/api"))
-    var apiKey: String
-        get() = str("apiKey", "")
-        set(v) = put("apiKey", v.trim())
+    /** Immich accounts (one per API key; may be different servers). */
+    var accounts: List<Account>
+        get() {
+            val raw = p.getString("accounts", null)
+            if (raw == null) {
+                // migrate the single server/apiKey from 0.1/0.2
+                val s = str("server", ""); val k = str("apiKey", "")
+                if (s.isEmpty() || k.isEmpty()) return emptyList()
+                val migrated = listOf(Account(Account.newId(), "Immich", Account.clean(s), k))
+                accounts = migrated
+                return migrated
+            }
+            return try {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).map { Account.fromJson(arr.getJSONObject(it)) }
+            } catch (e: Exception) { emptyList() }
+        }
+        set(v) = put("accounts", JSONArray().apply { v.forEach { put(it.toJson(withKey = true)) } }.toString())
+
+    fun upsertAccount(a: Account) {
+        val list = accounts.toMutableList()
+        val i = list.indexOfFirst { it.id == a.id }
+        if (i >= 0) list[i] = a else list.add(a)
+        accounts = list
+    }
+
+    fun removeAccount(id: String) { accounts = accounts.filter { it.id != id } }
+
+    var videos: Boolean
+        get() = p.getBoolean("videos", true)
+        set(v) = put("videos", v)
+    var videoSound: Boolean
+        get() = p.getBoolean("videoSound", false)
+        set(v) = put("videoSound", v)
+    var maxVideo: Int
+        get() = p.getInt("maxVideo", 60)
+        set(v) = put("maxVideo", v.coerceIn(5, 600))
     var frameName: String
         get() = str("name", "Photo frame")
         set(v) = put("name", v.trim())
@@ -104,5 +136,26 @@ class Prefs(ctx: Context) {
         get() = Source.parse(p.getString("source", null))
         set(v) = put("source", v.toJson().toString())
 
-    val configured: Boolean get() = server.isNotEmpty() && apiKey.isNotEmpty()
+    val configured: Boolean get() = accounts.any { it.server.isNotEmpty() && it.apiKey.isNotEmpty() }
+}
+
+data class Account(val id: String, val label: String, val server: String, val apiKey: String) {
+    fun toJson(withKey: Boolean = false): JSONObject = JSONObject()
+        .put("id", id).put("label", label).put("server", server).put("hasKey", apiKey.isNotEmpty())
+        .apply { if (withKey) put("apiKey", apiKey) }
+
+    companion object {
+        fun clean(server: String) = server.trim().trimEnd('/').removeSuffix("/api").trimEnd('/')
+
+        fun newId(): String {
+            val chars = "abcdefghjkmnpqrstuvwxyz23456789"
+            val r = java.util.Random()
+            return (1..6).map { chars[r.nextInt(chars.length)] }.joinToString("")
+        }
+
+        fun fromJson(o: JSONObject) = Account(
+            o.optStr("id") ?: newId(), o.optStr("label") ?: "Immich",
+            clean(o.optStr("server") ?: ""), o.optStr("apiKey") ?: "",
+        )
+    }
 }

@@ -33,7 +33,7 @@ class ApiServer(private val app: App, port: Int) : NanoHTTPD(port) {
         }
         r.addHeader("Access-Control-Allow-Origin", "*")
         r.addHeader("Access-Control-Allow-Headers", "Content-Type")
-        r.addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+        r.addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         return r
     }
 
@@ -60,12 +60,19 @@ class ApiServer(private val app: App, port: Int) : NanoHTTPD(port) {
 
     private fun <T> onMain(block: suspend () -> T): T = runBlocking { withContext(Dispatchers.Main) { block() } }
 
+    private fun test(acc: Account): JSONObject = try {
+        val c = Immich(acc)
+        JSONObject().put("connected", true).put("user", c.ping()).put("albums", c.albums().size).put("people", c.people().size)
+    } catch (e: Exception) {
+        JSONObject().put("connected", false).put("error", e.message ?: e.toString())
+    }
+
     private fun route(s: IHTTPSession): Response {
         if (s.method == Method.OPTIONS) return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
         val path = s.uri.trimEnd('/').ifEmpty { "/" }
 
-        if (path == "/" || path == "/index.html" || path == "/setup") {
-            val file = if (path == "/setup") "setup.html" else "control.html"
+        if (path == "/" || path == "/index.html" || path == "/setup" || path == "/settings") {
+            val file = if (path == "/setup" || path == "/settings") "setup.html" else "control.html"
             val html = app.assets.open(file).bufferedReader().use { it.readText() }
             return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
         }
@@ -90,7 +97,7 @@ class ApiServer(private val app: App, port: Int) : NanoHTTPD(port) {
             get && p.startsWith("/thumb/") -> {
                 val id = p.removePrefix("/thumb/")
                 if (!id.matches(Regex("[A-Za-z0-9-]+"))) return err(Response.Status.BAD_REQUEST, "bad id")
-                val f = app.cache.ensure(id)
+                val f = app.cache.ensure(id, engine.findAsset(id)?.acct)
                 newFixedLengthResponse(Response.Status.OK, "image/jpeg", FileInputStream(f), f.length())
             }
 
@@ -130,31 +137,29 @@ class ApiServer(private val app: App, port: Int) : NanoHTTPD(port) {
             post && p == "/hide" -> ok(JSONObject().put("ids", JSONArray(runBlocking { engine.hide(body.optStr("assetId")) })))
             get && p == "/stats" -> json(app.stats.summary())
 
-            // ---- connection setup (from the phone setup page)
-            get && p == "/config" -> json(JSONObject()
-                .put("configured", prefs.configured).put("server", prefs.server)
-                .put("hasKey", prefs.apiKey.isNotEmpty()).put("name", prefs.frameName)
-                .put("interval", prefs.interval).put("lat", prefs.lat).put("lon", prefs.lon))
-            post && p == "/config" -> {
-                val server = body.optStr("server") ?: throw IllegalArgumentException("server is required")
-                val changed = server.trimEnd('/') != prefs.server ||
-                    (body.optStr("apiKey") != null && body.optStr("apiKey") != prefs.apiKey)
-                prefs.server = server
-                body.optStr("apiKey")?.let { prefs.apiKey = it }
-                body.optStr("name")?.let { prefs.frameName = it }
-                if (body.has("interval")) prefs.interval = body.getInt("interval")
-                if (body.has("lat")) prefs.lat = body.optString("lat")
-                if (body.has("lon")) prefs.lon = body.optString("lon")
-                if (prefs.apiKey.isEmpty()) return err(Response.Status.BAD_REQUEST, "apiKey is required")
-                val res = JSONObject()
-                try {
-                    res.put("user", app.immich.ping()).put("albums", app.immich.albums().length()).put("connected", true)
-                } catch (e: Exception) {
-                    res.put("connected", false).put("error", e.message ?: e.toString())
-                }
-                if (changed) app.cache.clear()
+            // ---- Immich accounts (API keys never leave the frame)
+            get && p == "/accounts" -> json(JSONArray().apply { prefs.accounts.forEach { put(it.toJson()) } })
+            post && p == "/accounts" -> {
+                // add, or update when "id" is given (apiKey optional on update)
+                val id = body.optStr("id")
+                val old = prefs.accounts.find { it.id == id }
+                val server = Account.clean(body.optStr("server") ?: old?.server ?: throw IllegalArgumentException("server is required"))
+                val key = body.optStr("apiKey") ?: old?.apiKey ?: throw IllegalArgumentException("apiKey is required")
+                val acc = Account(old?.id ?: Account.newId(), body.optStr("label") ?: old?.label ?: "Immich", server, key)
+                val res = test(acc)
+                prefs.upsertAccount(acc)
                 runBlocking { withContext(Dispatchers.Main) { app.engine.reload(); app.onConfigured?.invoke() } }
-                ok(res)
+                ok(res.put("account", acc.toJson()))
+            }
+            post && p.matches(Regex("/accounts/[a-z0-9]+/test")) -> {
+                val acc = prefs.accounts.find { it.id == p.split("/")[2] } ?: return err(Response.Status.NOT_FOUND, "no such account")
+                json(test(acc))
+            }
+            (m == Method.DELETE && p.matches(Regex("/accounts/[a-z0-9]+"))) ||
+                (post && p.matches(Regex("/accounts/[a-z0-9]+/delete"))) -> {
+                prefs.removeAccount(p.split("/")[2])
+                runBlocking { withContext(Dispatchers.Main) { app.engine.reload() } }
+                ok()
             }
 
             // ---- frame

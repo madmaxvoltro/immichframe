@@ -9,8 +9,16 @@ import java.net.NetworkInterface
 
 class App : Application() {
     lateinit var prefs: Prefs
-    lateinit var immich: Immich
     lateinit var stats: Stats
+
+    /** One client per configured Immich account. Rebuilt when accounts change. */
+    @Volatile var clients: List<Immich> = emptyList(); private set
+
+    fun rebuildClients() {
+        clients = prefs.accounts.filter { it.server.isNotEmpty() && it.apiKey.isNotEmpty() }.map { Immich(it) }
+    }
+
+    fun client(acct: String?): Immich? = clients.find { it.id == acct } ?: clients.firstOrNull()
     lateinit var cache: PhotoCache
     lateinit var engine: Engine
     lateinit var updater: Updater
@@ -23,9 +31,9 @@ class App : Application() {
         super.onCreate()
         instance = this
         prefs = Prefs(this)
-        immich = Immich(prefs)
+        rebuildClients()
         stats = Stats(this)
-        cache = PhotoCache(this, immich)
+        cache = PhotoCache(this)
         engine = Engine(this)
         updater = Updater(this)
         startServer()

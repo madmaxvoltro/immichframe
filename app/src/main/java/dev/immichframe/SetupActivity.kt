@@ -49,8 +49,8 @@ class SetupActivity : Activity() {
         nightEnd = findViewById(R.id.nightEnd)
         testResult = findViewById(R.id.testResult)
 
-        server.setText(prefs.server)
-        apiKey.setText(prefs.apiKey)
+        // The frame screen edits the first account; add more from the web settings page.
+        prefs.accounts.firstOrNull()?.let { server.setText(it.server); apiKey.setText(it.apiKey) }
         name.setText(prefs.frameName)
         interval.setText(prefs.interval.toString())
         lat.setText(prefs.lat)
@@ -119,9 +119,12 @@ class SetupActivity : Activity() {
     }
 
     private fun save() {
-        val changedServer = server.text.toString().trim().trimEnd('/') != prefs.server || apiKey.text.toString().trim() != prefs.apiKey
-        prefs.server = server.text.toString()
-        prefs.apiKey = apiKey.text.toString()
+        val s = Account.clean(server.text.toString())
+        val k = apiKey.text.toString().trim()
+        val first = prefs.accounts.firstOrNull()
+        if (s.isNotEmpty() && k.isNotEmpty() && (first == null || first.server != s || first.apiKey != k)) {
+            prefs.upsertAccount(Account(first?.id ?: Account.newId(), first?.label ?: "Immich", s, k))
+        }
         prefs.frameName = name.text.toString().ifBlank { "Photo frame" }
         prefs.interval = interval.text.toString().toIntOrNull() ?: 30
         prefs.lat = lat.text.toString()
@@ -135,7 +138,6 @@ class SetupActivity : Activity() {
         prefs.showInfo = sw(R.id.ovInfo).isChecked
         prefs.showAlbum = sw(R.id.ovAlbum).isChecked
         prefs.nightEnabled = sw(R.id.night).isChecked
-        if (changedServer) app.cache.clear()
         app.engine.reload()
     }
 
@@ -145,8 +147,10 @@ class SetupActivity : Activity() {
         testResult.text = "Testing…"
         app.engine.scope.launch {
             try {
-                val who = withContext(Dispatchers.IO) { app.immich.ping() }
-                val albums = withContext(Dispatchers.IO) { app.immich.albums().length() }
+                val acc = prefs.accounts.firstOrNull() ?: throw IllegalStateException("enter server and API key")
+                val c = Immich(acc)
+                val who = withContext(Dispatchers.IO) { c.ping() }
+                val albums = withContext(Dispatchers.IO) { c.albums().size }
                 testResult.setTextColor(Color.parseColor("#8FD3C7"))
                 testResult.text = "Connected as $who · $albums albums"
             } catch (e: Exception) {

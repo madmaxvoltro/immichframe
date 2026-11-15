@@ -6,19 +6,23 @@ import android.graphics.BitmapFactory
 import java.io.File
 
 /** Disk cache of Immich "preview" thumbnails + memory-safe decoding (frame has ~512 MB RAM). */
-class PhotoCache(ctx: Context, private val immich: Immich) {
+class PhotoCache(ctx: Context) {
     private val dir = File(ctx.cacheDir, "photos").apply { mkdirs() }
     private val maxBytes = 1_500L * 1024 * 1024
     private var writes = 0
 
     fun file(id: String) = File(dir, "$id.img")
 
+    fun ensure(a: Asset): File = ensure(a.id, a.acct)
+
+    /** Download the preview (also the poster frame for videos) from the asset's account. */
     @Synchronized
-    fun ensure(id: String): File {
+    fun ensure(id: String, acct: String?): File {
         val f = file(id)
         if (!f.exists() || f.length() == 0L) {
             val tmp = File(dir, "$id.tmp")
-            immich.downloadPreview(id, tmp)
+            val c = App.instance.client(acct) ?: throw java.io.IOException("no Immich account configured")
+            c.downloadPreview(id, tmp)
             if (!tmp.renameTo(f)) { tmp.copyTo(f, true); tmp.delete() }
             if (++writes % 25 == 0) trim()
         } else {

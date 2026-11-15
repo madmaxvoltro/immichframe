@@ -3,68 +3,132 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frame setup</title>
+<title>Frame settings</title>
 <style>
-  :root { --bg:#0B0B0C; --card:#141416; --line:#2E2D2B; --text:#F4F1EA; --muted:#A8A49C; --accent:#F2B544; }
+  :root { --bg:#0B0B0C; --card:#141416; --line:#2E2D2B; --text:#F4F1EA; --muted:#A8A49C; --accent:#F2B544; --ok:#8FD3C7; --bad:#FF9B8F; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width:520px; margin:0 auto; padding:24px 16px 48px; display:flex; flex-direction:column; gap:18px; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px 64px; display:flex; flex-direction:column; gap:22px; }
+  header { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
   h1 { font-size:26px; margin:0; }
-  p { margin:0; }
+  h2 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0 0 12px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; }
   .muted { color:var(--muted); font-size:14px; }
-  label { display:block; font-size:14px; color:#CFCAC0; margin-bottom:6px; font-weight:500; }
-  input { width:100%; min-height:52px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--text); font:inherit; padding:0 14px; }
+  label { display:block; font-size:14px; color:#CFCAC0; margin:12px 0 6px; font-weight:500; }
+  input[type=text], input[type=url], input[type=password], input[type=number], input[type=time] {
+    width:100%; min-height:48px; border-radius:12px; border:1px solid var(--line); background:#0F0F11; color:var(--text); font:inherit; padding:0 12px; }
   .two { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  button { min-height:52px; border-radius:12px; border:none; background:var(--accent); color:#0B0B0C; font:inherit; font-weight:600; cursor:pointer; }
+  .toggle { display:flex; justify-content:space-between; align-items:center; min-height:48px; border-top:1px solid #1E1E1D; }
+  .toggle:first-of-type { border-top:none; }
+  .toggle input { width:22px; height:22px; accent-color:var(--accent); }
+  button { min-height:48px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--text); font:inherit; padding:0 16px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#0B0B0C; font-weight:600; }
+  button.small { min-height:40px; padding:0 12px; font-size:14px; }
   button:disabled { opacity:.6; }
-  .result { padding:14px 16px; border-radius:12px; background:var(--card); border:1px solid var(--line); display:none; }
-  .ok { color:#8FD3C7; } .err { color:#FF9B8F; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .acct { display:flex; gap:12px; align-items:center; padding:12px 0; border-top:1px solid #1E1E1D; flex-wrap:wrap; }
+  .acct:first-child { border-top:none; }
+  .acct .grow { flex:1; min-width:180px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#555; flex-shrink:0; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  .msg { font-size:14px; margin-top:10px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
   a { color:var(--accent); }
-  details { color:var(--muted); font-size:14px; }
+  details { color:var(--muted); font-size:14px; margin-top:8px; }
 </style>
 </head>
 <body>
 <main>
-  <div>
-    <h1>Set up your frame</h1>
-    <p class="muted" id="frame">Connecting to the frame…</p>
-  </div>
-
-  <div>
-    <label for="server">Immich server URL</label>
-    <input id="server" type="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="http://192.168.0.20:2283">
-    <p class="muted" style="margin-top:6px">The address you open Immich with on your network.</p>
-  </div>
-
-  <div>
-    <label for="apiKey">Immich API key</label>
-    <input id="apiKey" type="password" autocapitalize="off" autocorrect="off" placeholder="Paste your key">
-    <details style="margin-top:6px">
-      <summary>Where do I get this?</summary>
-      In Immich: your avatar → Account settings → API keys → New API key.
-      Give it: asset.read, asset.view, album.read, person.read and asset.update (for likes). Or just “all”.
-    </details>
-  </div>
-
-  <div class="two">
-    <div><label for="name">Frame name</label><input id="name" placeholder="Living room"></div>
-    <div><label for="interval">Seconds per photo</label><input id="interval" type="number" inputmode="numeric" min="5" placeholder="30"></div>
-  </div>
-
-  <div>
-    <label>Weather location (optional)</label>
-    <div class="two">
-      <input id="lat" inputmode="decimal" placeholder="Latitude 52.37">
-      <input id="lon" inputmode="decimal" placeholder="Longitude 4.90">
+  <header>
+    <div>
+      <h1 id="title">Frame settings</h1>
+      <div class="muted" id="sub">Loading…</div>
     </div>
-    <p class="muted" style="margin-top:6px"><a href="#" id="locate">Use my phone's location</a></p>
-  </div>
+    <a href="/">Remote control →</a>
+  </header>
 
-  <button id="save">Connect frame</button>
-  <div class="result" id="result"></div>
+  <!-- ACCOUNTS -->
+  <section>
+    <h2>Immich accounts</h2>
+    <p class="muted" style="margin:0">Add one API key per person or server. Photos from every account are mixed together. People and albums with the same name are merged, so "Dave" plays every Dave from every account.</p>
+    <div id="accounts" style="margin-top:8px"></div>
+
+    <div id="acctForm" style="margin-top:8px">
+      <input type="hidden" id="aId">
+      <label for="aLabel">Name for this account</label>
+      <input id="aLabel" type="text" placeholder="e.g. Max, Mom, Family server">
+      <label for="aServer">Immich server URL</label>
+      <input id="aServer" type="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="http://192.168.0.20:2283">
+      <label for="aKey">API key</label>
+      <input id="aKey" type="password" autocapitalize="off" autocorrect="off" placeholder="Paste the key">
+      <details><summary>Where do I get a key?</summary>
+        In Immich: avatar → Account settings → API keys → New API key. Give it asset.read, asset.view, asset.download, album.read, person.read and asset.update (for likes), or simply "all".
+      </details>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="aSave">Add account</button>
+        <button id="aCancel" style="display:none">Cancel</button>
+      </div>
+      <div class="msg" id="aMsg"></div>
+    </div>
+  </section>
+
+  <!-- SLIDESHOW -->
+  <section>
+    <h2>Slideshow</h2>
+    <div class="two">
+      <div><label for="name">Frame name</label><input id="name" type="text"></div>
+      <div><label for="interval">Seconds per photo</label><input id="interval" type="number" min="5" max="3600"></div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="toggle"><span>Smart shuffle (favor liked photos)</span><input type="checkbox" id="smart"></div>
+      <div class="toggle"><span>Pair two portrait photos in landscape</span><input type="checkbox" id="pairing"></div>
+    </div>
+  </section>
+
+  <!-- VIDEOS -->
+  <section>
+    <h2>Videos</h2>
+    <div class="toggle"><span>Include videos</span><input type="checkbox" id="videos"></div>
+    <div class="toggle"><span>Play video sound</span><input type="checkbox" id="videoSound"></div>
+    <label for="maxVideo">Longest a video plays (seconds)</label>
+    <input id="maxVideo" type="number" min="5" max="600">
+  </section>
+
+  <!-- OVERLAYS -->
+  <section>
+    <h2>On screen</h2>
+    <div class="toggle"><span>Clock and date</span><input type="checkbox" id="ovClock"></div>
+    <div class="toggle"><span>Weather</span><input type="checkbox" id="ovWeather"></div>
+    <div class="toggle"><span>Photo info (place, date, people)</span><input type="checkbox" id="ovInfo"></div>
+    <div class="toggle"><span>Album name</span><input type="checkbox" id="ovAlbum"></div>
+    <div class="two">
+      <div><label for="lat">Weather latitude</label><input id="lat" type="text" inputmode="decimal" placeholder="52.37"></div>
+      <div><label for="lon">Weather longitude</label><input id="lon" type="text" inputmode="decimal" placeholder="4.90"></div>
+    </div>
+  </section>
+
+  <!-- NIGHT -->
+  <section>
+    <h2>Night</h2>
+    <div class="toggle"><span>Turn the screen off at night</span><input type="checkbox" id="night"></div>
+    <div class="two">
+      <div><label for="nightStart">Off from</label><input id="nightStart" type="time"></div>
+      <div><label for="nightEnd">On again at</label><input id="nightEnd" type="time"></div>
+    </div>
+  </section>
+
+  <div class="row">
+    <button class="primary" id="save" style="flex:1">Save settings</button>
+  </div>
+  <div class="msg" id="sMsg"></div>
+
+  <!-- UPDATES -->
+  <section>
+    <h2>Updates</h2>
+    <div class="row"><span class="muted" id="ver" style="flex:1">…</span><button class="small" id="upd">Check for updates</button></div>
+  </section>
 </main>
 <script>
-
   var $ = function (id) { return document.getElementById(id); };
   function api(method, path, body) {
     return fetch('/api' + path, {
@@ -73,52 +137,102 @@
       body: body ? JSON.stringify(body) : undefined
     }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); });
   }
-  function show(cls, html) { var r = $('result'); r.style.display = 'block'; r.className = 'result ' + cls; r.innerHTML = html; }
+  function msg(el, cls, text) { el.className = 'msg ' + cls; el.textContent = text; }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
-  api('GET', '/config').then(function (c) {
-    $('frame').textContent = c.configured ? 'Connected to ' + c.server + '. Change it below.' : 'Not connected yet.';
-    $('server').value = c.server || '';
-    $('name').value = c.name || '';
-    $('interval').value = c.interval || '';
-    $('lat').value = c.lat || '';
-    $('lon').value = c.lon || '';
-    if (c.hasKey) $('apiKey').placeholder = 'Key saved. Paste a new one to replace it.';
-  }).catch(function (e) {
-    $('frame').textContent = 'Could not talk to the frame: ' + e.message + '.';
-    $('frame').className = 'err';
-  });
-
-  $('locate').onclick = function (e) {
-    e.preventDefault();
-    if (!navigator.geolocation) return show('err', 'Location not available in this browser.');
-    navigator.geolocation.getCurrentPosition(function (p) {
-      $('lat').value = p.coords.latitude.toFixed(2);
-      $('lon').value = p.coords.longitude.toFixed(2);
-    }, function () { show('err', 'Location blocked (browsers only allow it on https). Type it instead, e.g. 52.37 / 4.90.'); });
+  // ---------- accounts
+  function loadAccounts() {
+    api('GET', '/accounts').then(function (list) {
+      var box = $('accounts');
+      if (!list.length) { box.innerHTML = '<p class="muted">No accounts yet. Add your first one below.</p>'; return; }
+      box.innerHTML = '';
+      list.forEach(function (a) {
+        var row = document.createElement('div');
+        row.className = 'acct';
+        row.innerHTML = '<span class="dot" id="dot-' + a.id + '"></span>' +
+          '<div class="grow"><div>' + esc(a.label) + '</div><div class="muted">' + esc(a.server) + '</div>' +
+          '<div class="muted" id="st-' + a.id + '">Checking…</div></div>' +
+          '<button class="small" data-edit>Edit</button><button class="small" data-del>Remove</button>';
+        row.querySelector('[data-edit]').onclick = function () { editAccount(a); };
+        row.querySelector('[data-del]').onclick = function () {
+          if (!confirm('Remove "' + a.label + '" from this frame?')) return;
+          api('DELETE', '/accounts/' + a.id).then(loadAccounts).catch(function (e) { alert(e.message); });
+        };
+        box.appendChild(row);
+        api('POST', '/accounts/' + a.id + '/test').then(function (t) {
+          $('dot-' + a.id).className = 'dot ' + (t.connected ? 'ok' : 'bad');
+          $('st-' + a.id).textContent = t.connected ? t.user + ' · ' + t.albums + ' albums · ' + t.people + ' people' : t.error;
+        });
+      });
+    }).catch(function (e) { $('accounts').innerHTML = '<p class="bad">' + esc(e.message) + '</p>'; });
+  }
+  function editAccount(a) {
+    $('aId').value = a.id; $('aLabel').value = a.label; $('aServer').value = a.server; $('aKey').value = '';
+    $('aKey').placeholder = 'Leave empty to keep the current key';
+    $('aSave').textContent = 'Save account'; $('aCancel').style.display = '';
+    $('aLabel').focus();
+  }
+  function resetForm() {
+    $('aId').value = ''; $('aLabel').value = ''; $('aServer').value = ''; $('aKey').value = '';
+    $('aKey').placeholder = 'Paste the key'; $('aSave').textContent = 'Add account'; $('aCancel').style.display = 'none';
+  }
+  $('aCancel').onclick = resetForm;
+  $('aSave').onclick = function () {
+    var body = { label: $('aLabel').value.trim() || 'Immich', server: $('aServer').value.trim() };
+    if ($('aId').value) body.id = $('aId').value;
+    if ($('aKey').value.trim()) body.apiKey = $('aKey').value.trim();
+    if (!body.server) return msg($('aMsg'), 'bad', 'Fill in the server URL.');
+    if (!body.id && !body.apiKey) return msg($('aMsg'), 'bad', 'Paste an API key.');
+    $('aSave').disabled = true; msg($('aMsg'), 'muted', 'Connecting…');
+    api('POST', '/accounts', body).then(function (r) {
+      msg($('aMsg'), r.connected ? 'ok' : 'bad', r.connected
+        ? 'Connected as ' + r.user + ' · ' + r.albums + ' albums. The frame is reloading.'
+        : 'Saved, but Immich did not answer: ' + r.error);
+      resetForm(); loadAccounts();
+    }).catch(function (e) { msg($('aMsg'), 'bad', e.message); })
+      .then(function () { $('aSave').disabled = false; });
   };
 
+  // ---------- settings
+  function loadSettings() {
+    api('GET', '/settings').then(function (s) {
+      $('title').textContent = s.name + ' settings';
+      $('name').value = s.name; $('interval').value = s.interval;
+      $('smart').checked = s.smart; $('pairing').checked = s.pairing;
+      $('videos').checked = s.videos; $('videoSound').checked = s.videoSound; $('maxVideo').value = s.maxVideo;
+      $('ovClock').checked = s.overlays.clock; $('ovWeather').checked = s.overlays.weather;
+      $('ovInfo').checked = s.overlays.info; $('ovAlbum').checked = s.overlays.album;
+      $('lat').value = s.lat; $('lon').value = s.lon;
+      $('night').checked = s.night.enabled; $('nightStart').value = s.night.start; $('nightEnd').value = s.night.end;
+    });
+    api('GET', '/status').then(function (st) {
+      $('sub').textContent = st.accounts + ' account(s) · ' + st.source.name + ' · ' + st.status + ' · ' + st.orientation + ' · v' + st.version;
+    }).catch(function () {});
+  }
   $('save').onclick = function () {
     var body = {
-      server: $('server').value.trim(),
-      name: $('name').value.trim(),
-      interval: parseInt($('interval').value, 10) || undefined,
-      lat: $('lat').value.trim(),
-      lon: $('lon').value.trim()
+      name: $('name').value.trim(), interval: parseInt($('interval').value, 10) || 30,
+      smart: $('smart').checked, pairing: $('pairing').checked,
+      videos: $('videos').checked, videoSound: $('videoSound').checked, maxVideo: parseInt($('maxVideo').value, 10) || 60,
+      overlays: { clock: $('ovClock').checked, weather: $('ovWeather').checked, info: $('ovInfo').checked, album: $('ovAlbum').checked },
+      lat: $('lat').value.trim(), lon: $('lon').value.trim(),
+      night: { enabled: $('night').checked, start: $('nightStart').value || '23:00', end: $('nightEnd').value || '07:00' }
     };
-    if ($('apiKey').value.trim()) body.apiKey = $('apiKey').value.trim();
-    if (!body.server) return show('err', 'Fill in the server URL.');
-    $('save').disabled = true; $('save').textContent = 'Connecting…';
-    api('POST', '/config', body).then(function (r) {
-      if (r.connected) {
-        show('ok', 'Connected as ' + r.user + ' · ' + r.albums + ' albums. The frame is starting.<br><br>' +
-          '<a href="/">Open the remote control →</a> (bookmark it)');
-        $('apiKey').value = '';
-      } else {
-        show('err', 'Saved, but Immich did not answer: ' + r.error);
-      }
-    }).catch(function (e) { show('err', e.message); })
-      .then(function () { $('save').disabled = false; $('save').textContent = 'Connect frame'; });
+    $('save').disabled = true;
+    api('PUT', '/settings', body).then(function () { msg($('sMsg'), 'ok', 'Saved. The frame uses the new settings now.'); loadSettings(); })
+      .catch(function (e) { msg($('sMsg'), 'bad', e.message); })
+      .then(function () { $('save').disabled = false; });
   };
+
+  // ---------- updates
+  function showUpdate(u) {
+    $('ver').textContent = 'Version ' + u.current + (u.latest ? ' · latest ' + u.latest : '') + ' · ' + u.state + (u.error ? ' (' + u.error + ')' : '') + (u.silent ? '' : ' · installs after a tap on the frame');
+  }
+  $('upd').onclick = function () { $('ver').textContent = 'Checking GitHub…'; api('POST', '/update').then(showUpdate).catch(function (e) { $('ver').textContent = e.message; }); };
+  api('GET', '/update').then(showUpdate).catch(function () {});
+
+  loadAccounts();
+  loadSettings();
 </script>
 </body>
 </html>

@@ -6,7 +6,13 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Bundle
+import android.view.Surface
+import android.view.TextureView
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -146,6 +152,13 @@ class SlideshowActivity : Activity(), Engine.Listener {
         if (engine.listener === this) engine.listener = null
     }
 
+    override fun onStop() {
+        super.onStop()
+        // stop video when something covers the frame (setup, Android settings); onResume re-shows the slide
+        releasePlayer()
+        stage.removeAllViews()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) immersive()
@@ -251,6 +264,11 @@ class SlideshowActivity : Activity(), Engine.Listener {
         btnPause.setImageResource(if (engine.paused) R.drawable.ic_play else R.drawable.ic_pause)
         btnPause.contentDescription = if (engine.paused) "Play" else "Pause"
         if (engine.paused) progressAnim?.pause() else progressAnim?.resume()
+        player?.let { mp ->
+            if (playerReady) runCatching { if (engine.paused && mp.isPlaying) mp.pause() else if (!engine.paused && !mp.isPlaying) mp.start() }
+            val vol = if (p.videoSound) 1f else 0f
+            runCatching { mp.setVolume(vol, vol) }
+        }
 
         val liked = engine.current?.assets?.let { a -> a.isNotEmpty() && a.all { it.favorite } } == true
         btnLike.text = if (liked) "Liked" else "Like"
@@ -288,7 +306,87 @@ class SlideshowActivity : Activity(), Engine.Listener {
 
     // ---------------------------------------------------------------- slide rendering
 
+    // ---------------------------------------------------------------- video
+
+    private var player: MediaPlayer? = null
+    private var playerReady = false
+
+    private fun releasePlayer() {
+        player?.let { runCatching { it.stop() }; runCatching { it.release() } }
+        player = null
+        playerReady = false
+    }
+
+    /** Poster frame first, then the video fades in on a TextureView (fades with the slide, unlike SurfaceView). */
+    private fun buildVideoView(a: Asset, poster: Bitmap): View {
+        val root = FrameLayout(this)
+        root.setBackgroundColor(Color.BLACK)
+        root.addView(ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(tinyBlur(poster)); alpha = 0.55f
+        }, FrameLayout.LayoutParams(-1, -1))
+        root.addView(ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER; setImageBitmap(poster)
+        }, FrameLayout.LayoutParams(-1, -1))
+        val tv = TextureView(this)
+        tv.alpha = 0f
+        root.addView(tv, FrameLayout.LayoutParams(-1, -1))
+        val client = app.client(a.acct) ?: return root
+
+        tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            var mine: MediaPlayer? = null
+            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                releasePlayer()
+                val mp = MediaPlayer()
+                mine = mp
+                player = mp
+                try {
+                    mp.setDataSource(this@SlideshowActivity, Uri.parse(client.videoUrl(a.id)), client.headers)
+                    mp.setSurface(Surface(st))
+                    val vol = if (app.prefs.videoSound) 1f else 0f
+                    mp.setVolume(vol, vol)
+                    mp.setOnPreparedListener {
+                        playerReady = true
+                        fitVideo(tv, it.videoWidth, it.videoHeight)
+                        if (!engine.paused) it.start()
+                        tv.animate().alpha(1f).setDuration(400).start()
+                    }
+                    mp.setOnVideoSizeChangedListener { _, vw, vh -> fitVideo(tv, vw, vh) }
+                    mp.setOnCompletionListener { engine.videoEnded(a.id) }
+                    mp.setOnErrorListener { _, what, extra ->
+                        android.util.Log.w("Video", "error $what/$extra for ${a.id}")
+                        engine.videoEnded(a.id); true
+                    }
+                    mp.prepareAsync()
+                } catch (e: Exception) {
+                    android.util.Log.w("Video", "cannot play ${a.id}", e)
+                    engine.videoEnded(a.id)
+                }
+            }
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                mine?.let { if (playerReady) fitVideo(tv, it.videoWidth, it.videoHeight) }
+            }
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                if (player === mine) releasePlayer() else mine?.let { runCatching { it.release() } }
+                mine = null
+                return true
+            }
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+        }
+        return root
+    }
+
+    /** TextureView stretches to its bounds; scale back to fit-center. */
+    private fun fitVideo(tv: TextureView, vw: Int, vh: Int) {
+        val w = tv.width.toFloat(); val h = tv.height.toFloat()
+        if (vw <= 0 || vh <= 0 || w <= 0 || h <= 0) return
+        val scale = minOf(w / vw, h / vh)
+        val m = Matrix()
+        m.setScale(vw * scale / w, vh * scale / h, w / 2, h / 2)
+        tv.setTransform(m)
+    }
+
     private fun buildSlideView(s: Slide): View {
+        s.video?.let { return buildVideoView(it, s.bitmaps[0]) }
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
         val sw = stage.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
@@ -375,7 +473,7 @@ class SlideshowActivity : Activity(), Engine.Listener {
         progressAnim?.cancel()
         progressFill.scaleX = 0f
         val anim = ObjectAnimator.ofFloat(progressFill, "scaleX", 0f, 1f)
-        anim.duration = app.prefs.interval * 1000L
+        anim.duration = engine.current?.video?.let { engine.videoMs(it) } ?: (app.prefs.interval * 1000L)
         anim.interpolator = LinearInterpolator()
         anim.start()
         if (engine.paused) anim.pause()
@@ -455,7 +553,13 @@ class SlideshowActivity : Activity(), Engine.Listener {
                         if (tab != name) return@launch
                         val out = (0 until arr.length()).map { arr.getJSONObject(it) }.map { o ->
                             val type = if (name == "Albums") "album" else "person"
-                            val sub = if (name == "Albums") "${o.optInt("count")} photos" else "Person"
+                            val matches = o.optInt("matches", 1)
+                            val sub = when {
+                                name == "Albums" && matches > 1 -> "${o.optInt("count")} items · $matches albums merged"
+                                name == "Albums" -> "${o.optInt("count")} items"
+                                matches > 1 -> "$matches people with this name, all included"
+                                else -> "Person"
+                            }
                             PickRow(o.optString("name"), sub) {
                                 choose(Source(type, o.optString("id"), o.optString("name")))
                             }

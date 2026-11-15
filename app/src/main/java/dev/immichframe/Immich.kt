@@ -16,6 +16,9 @@ import java.util.concurrent.TimeUnit
 
 class Asset(
     val id: String,
+    val acct: String,           // Account.id this asset came from
+    val video: Boolean,
+    val duration: Double,       // seconds, 0 = unknown / photo
     val date: String?,          // ISO, e.g. 2025-08-12T14:03:00.000Z
     val city: String?,
     val country: String?,
@@ -29,13 +32,14 @@ class Asset(
     val place: String get() = listOfNotNull(city, country).filter { it.isNotBlank() }.joinToString(", ")
 
     fun toJson(): JSONObject = JSONObject()
-        .put("id", id).put("date", date).put("place", place)
+        .put("id", id).put("account", acct).put("type", if (video) "video" else "photo")
+        .put("duration", duration).put("date", date).put("place", place)
         .put("people", JSONArray(people)).put("liked", favorite)
 
     companion object {
-        fun parse(o: JSONObject): Asset? {
-            val type = o.optStr("type")
-            if (type != null && type != "IMAGE") return null
+        fun parse(o: JSONObject, acct: String): Asset? {
+            val type = o.optStr("type") ?: "IMAGE"
+            if (type != "IMAGE" && type != "VIDEO") return null
             val id = o.optStr("id") ?: return null
             val ex = o.optJSONObject("exifInfo")
             var w = ex?.optInt("exifImageWidth", 0) ?: 0
@@ -46,27 +50,35 @@ class Asset(
             o.optJSONArray("people")?.let { arr ->
                 for (i in 0 until arr.length()) arr.optJSONObject(i)?.optStr("name")?.let { people.add(it) }
             }
-            return Asset(id, date, ex?.optStr("city"), ex?.optStr("country"), people,
-                o.optBoolean("isFavorite", false), w, h)
+            return Asset(id, acct, type == "VIDEO", parseDuration(o.optStr("duration")), date,
+                ex?.optStr("city"), ex?.optStr("country"), people, o.optBoolean("isFavorite", false), w, h)
+        }
+
+        /** "0:01:12.345000" → 72.345 */
+        fun parseDuration(s: String?): Double {
+            if (s.isNullOrBlank()) return 0.0
+            return try {
+                s.split(":").map { it.toDouble() }.fold(0.0) { acc, v -> acc * 60 + v }
+            } catch (e: Exception) { 0.0 }
         }
     }
 }
 
-class Immich(private val prefs: Prefs) {
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
+/** One Immich account (server + API key). */
+class Immich(val account: Account) {
     private val jsonType = "application/json".toMediaType()
 
+    val id get() = account.id
+    val headers: Map<String, String> get() = mapOf("x-api-key" to account.apiKey)
+
     private fun req(path: String): Request.Builder = Request.Builder()
-        .url(prefs.server + "/api" + path)
-        .header("x-api-key", prefs.apiKey)
+        .url(account.server + "/api" + path)
+        .header("x-api-key", account.apiKey)
         .header("Accept", "application/json")
 
     private fun call(r: Request): String = http.newCall(r).execute().use { resp ->
         val b = resp.body?.string() ?: ""
-        if (!resp.isSuccessful) throw IOException("Immich ${resp.code} on ${r.url.encodedPath}: ${b.take(200)}")
+        if (!resp.isSuccessful) throw IOException("${account.label}: Immich ${resp.code} on ${r.url.encodedPath}: ${b.take(200)}")
         b
     }
 
@@ -82,29 +94,29 @@ class Immich(private val prefs: Prefs) {
         return "${me.optString("name")} (${me.optString("email")})"
     }
 
-    fun albums(): JSONArray {
+    /** [{id, name, count}] */
+    fun albums(): List<JSONObject> {
         val arr = JSONArray(get("/albums"))
-        val out = JSONArray()
         val seen = HashSet<String>()
-        for (i in 0 until arr.length()) {
-            val a = arr.getJSONObject(i)
-            val id = a.optString("id")
-            if (!seen.add(id)) continue
-            out.put(JSONObject().put("id", id).put("name", a.optString("albumName"))
-                .put("count", a.optInt("assetCount")))
+        return (0 until arr.length()).map { arr.getJSONObject(it) }.filter { seen.add(it.optString("id")) }.map { a ->
+            JSONObject().put("id", a.optString("id")).put("name", a.optString("albumName")).put("count", a.optInt("assetCount"))
         }
-        return out
     }
 
-    fun people(): JSONArray {
-        val o = JSONObject(get("/people?withHidden=false"))
-        val arr = o.optJSONArray("people") ?: JSONArray()
-        val out = JSONArray()
-        for (i in 0 until arr.length()) {
-            val p = arr.getJSONObject(i)
-            val name = p.optStr("name") ?: continue
-            if (p.optBoolean("isHidden")) continue
-            out.put(JSONObject().put("id", p.optString("id")).put("name", name))
+    /** [{id, name}] — named, non-hidden people */
+    fun people(): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        var page = 1
+        while (page in 1..20) {
+            val o = JSONObject(get("/people?withHidden=false&size=1000&page=$page"))
+            val arr = o.optJSONArray("people") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val p = arr.getJSONObject(i)
+                val name = p.optStr("name") ?: continue
+                if (p.optBoolean("isHidden")) continue
+                out.add(JSONObject().put("id", p.optString("id")).put("name", name))
+            }
+            page = if (o.optBoolean("hasNextPage", false)) page + 1 else 0
         }
         return out
     }
@@ -112,17 +124,19 @@ class Immich(private val prefs: Prefs) {
     private fun items(o: JSONObject): Pair<List<Asset>, String?> {
         val a = o.optJSONObject("assets") ?: return emptyList<Asset>() to null
         val arr = a.optJSONArray("items") ?: JSONArray()
-        val list = (0 until arr.length()).mapNotNull { Asset.parse(arr.getJSONObject(it)) }
+        val list = (0 until arr.length()).mapNotNull { Asset.parse(arr.getJSONObject(it), id) }
         return list to a.optStr("nextPage")
     }
 
+    private fun JSONObject.typed(videos: Boolean): JSONObject = if (videos) this else put("type", "IMAGE")
+
     /** POST /search/metadata with a filter (albumIds, personIds, isFavorite, takenAfter…), paginated. */
-    fun metadata(filter: JSONObject, max: Int = 5000): List<Asset> {
+    fun metadata(filter: JSONObject, videos: Boolean, max: Int = 5000): List<Asset> {
         val out = ArrayList<Asset>()
         var page: String? = "1"
         while (page != null && out.size < max) {
-            val body = JSONObject(filter.toString())
-                .put("type", "IMAGE").put("withExif", true).put("withPeople", true)
+            val body = JSONObject(filter.toString()).typed(videos)
+                .put("withExif", true).put("withPeople", true)
                 .put("size", 1000).put("page", page.toInt())
             val (list, next) = items(JSONObject(post("/search/metadata", body)))
             out.addAll(list)
@@ -131,18 +145,17 @@ class Immich(private val prefs: Prefs) {
         return out
     }
 
-    fun random(n: Int): List<Asset> {
-        val body = JSONObject().put("size", n).put("type", "IMAGE")
-            .put("withExif", true).put("withPeople", true)
+    fun random(n: Int, videos: Boolean): List<Asset> {
+        val body = JSONObject().put("size", n).typed(videos).put("withExif", true).put("withPeople", true)
         val arr = JSONArray(post("/search/random", body))
-        return (0 until arr.length()).mapNotNull { Asset.parse(arr.getJSONObject(it)) }
+        return (0 until arr.length()).mapNotNull { Asset.parse(arr.getJSONObject(it), id) }
     }
 
-    fun smart(query: String, max: Int = 300): List<Asset> {
+    fun smart(query: String, videos: Boolean, max: Int = 300): List<Asset> {
         val out = ArrayList<Asset>()
         var page: String? = "1"
         while (page != null && out.size < max) {
-            val body = JSONObject().put("query", query).put("type", "IMAGE")
+            val body = JSONObject().put("query", query).typed(videos)
                 .put("withExif", true).put("size", 100).put("page", page.toInt())
             val (list, next) = items(JSONObject(post("/search/smart", body)))
             out.addAll(list)
@@ -152,14 +165,16 @@ class Immich(private val prefs: Prefs) {
     }
 
     /** "On this day" in earlier years. Uses /memories, falls back to date-range searches. */
-    fun memories(): List<Asset> {
+    fun memories(videos: Boolean): List<Asset> {
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         try {
             val arr = JSONArray(get("/memories?for=" + iso.format(java.util.Date())))
             val out = ArrayList<Asset>()
             for (i in 0 until arr.length()) {
                 val assets = arr.getJSONObject(i).optJSONArray("assets") ?: continue
-                for (j in 0 until assets.length()) Asset.parse(assets.getJSONObject(j))?.let { out.add(it) }
+                for (j in 0 until assets.length()) Asset.parse(assets.getJSONObject(j), id)?.let {
+                    if (videos || !it.video) out.add(it)
+                }
             }
             if (out.isNotEmpty()) return out
         } catch (e: Exception) { /* older server: fall through */ }
@@ -170,23 +185,32 @@ class Immich(private val prefs: Prefs) {
                 set(today.get(Calendar.YEAR) - back, today.get(Calendar.MONTH), today.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
             }
             val to = (from.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, 1) }
-            out.addAll(metadata(JSONObject().put("takenAfter", iso.format(from.time)).put("takenBefore", iso.format(to.time)), 500))
+            out.addAll(metadata(JSONObject().put("takenAfter", iso.format(from.time)).put("takenBefore", iso.format(to.time)), videos, 500))
         }
         return out
     }
 
-    fun asset(id: String): Asset? = Asset.parse(JSONObject(get("/assets/$id")))
+    fun asset(assetId: String): Asset? = Asset.parse(JSONObject(get("/assets/$assetId")), id)
 
-    fun setFavorite(id: String, fav: Boolean) {
-        put("/assets/$id", JSONObject().put("isFavorite", fav))
+    fun setFavorite(assetId: String, fav: Boolean) {
+        put("/assets/$assetId", JSONObject().put("isFavorite", fav))
     }
 
-    fun downloadPreview(id: String, dest: File) {
-        val r = req("/assets/$id/thumbnail?size=preview").header("Accept", "*/*").get().build()
+    fun videoUrl(assetId: String) = "${account.server}/api/assets/$assetId/video/playback"
+
+    fun downloadPreview(assetId: String, dest: File) {
+        val r = req("/assets/$assetId/thumbnail?size=preview").header("Accept", "*/*").get().build()
         http.newCall(r).execute().use { resp ->
-            if (!resp.isSuccessful) throw IOException("thumbnail ${resp.code} for $id")
-            val body = resp.body ?: throw IOException("empty thumbnail for $id")
+            if (!resp.isSuccessful) throw IOException("thumbnail ${resp.code} for $assetId")
+            val body = resp.body ?: throw IOException("empty thumbnail for $assetId")
             dest.outputStream().use { body.byteStream().copyTo(it) }
         }
+    }
+
+    companion object {
+        val http: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
     }
 }
